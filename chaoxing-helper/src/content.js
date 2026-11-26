@@ -401,6 +401,54 @@
     .cxh-toast[data-type="warn"] { background: #8a5600; }
     .cxh-toast[data-type="success"] { background: #136b3c; }
     .cxh-toast[data-type="error"] { background: #a13232; }
+    .cxh-update {
+      flex: none; margin: 8px 12px 0; padding: 9px 10px;
+      border: 1px solid #f1d7a8; border-radius: 10px; background: #fff8ec; color: #805200;
+      font-size: 11px;
+    }
+    .cxh-update-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .cxh-update-head strong { font-size: 12px; }
+    .cxh-update-close {
+      border: 0; padding: 0 2px; background: none; color: #a06a10;
+      font-size: 16px; line-height: 1; cursor: pointer;
+    }
+    .cxh-update-note {
+      margin-top: 4px; max-height: 96px; overflow: auto; white-space: pre-wrap;
+      overflow-wrap: anywhere; color: #8a5c0b; line-height: 1.55;
+    }
+    .cxh-update-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 7px; }
+    .cxh-update-btn {
+      height: 26px; padding: 0 9px; border: 0; border-radius: 7px;
+      color: #fff; background: linear-gradient(135deg, #f0a020, #d97706);
+      font: 600 10.5px/1 "Microsoft YaHei", sans-serif; cursor: pointer;
+    }
+    .cxh-update-btn:hover { filter: brightness(1.05); }
+    .cxh-update-btn:disabled { opacity: .55; cursor: not-allowed; }
+    .cxh-update-mute {
+      display: inline-flex; align-items: center; gap: 4px;
+      color: #8a5c0b; font-size: 10.5px; cursor: pointer;
+    }
+    .cxh-update-mute input { width: 13px; height: 13px; accent-color: #d97706; }
+    .cxh-update-sources { display: flex; flex-direction: column; gap: 5px; margin-top: 7px; }
+    .cxh-update-source {
+      display: flex; flex-direction: column; gap: 2px; padding: 6px 8px;
+      border: 1px solid #f0d39b; border-radius: 7px; background: #fff; color: #805200;
+      text-align: left; font: 600 10.5px/1.4 "Microsoft YaHei", sans-serif; cursor: pointer;
+    }
+    .cxh-update-source:hover { background: #fffdf7; }
+    .cxh-update-source span {
+      display: block; color: #a16d12; font-weight: 400; font-size: 10px; overflow-wrap: anywhere;
+    }
+    .cxh-update-source .cxh-update-password { color: #8a5600; }
+    .cxh-update-hint { margin-top: 6px; color: #a9864a; font-size: 9.5px; }
+    .cxh-update-pill {
+      position: absolute; right: 0; bottom: 74px; z-index: 3;
+      display: flex; align-items: center; gap: 5px; padding: 7px 10px;
+      border: 0; border-radius: 999px; color: #fff;
+      background: linear-gradient(135deg, #f0a020, #d97706);
+      box-shadow: 0 8px 20px rgba(160, 90, 0, .28);
+      font: 600 11px/1 "Microsoft YaHei", sans-serif; cursor: pointer;
+    }
     @media (prefers-reduced-motion: reduce) {
       .cxh-panel { animation: none; }
       .cxh-status[data-state="blocked"] .cxh-dot { animation: none; }
@@ -424,6 +472,22 @@
             <button type="button" class="cxh-icon" data-action="collapse" title="收起窗口">${MINUS_SVG}</button>
           </div>
         </header>
+        <div class="cxh-update" data-role="update" hidden>
+          <div class="cxh-update-head">
+            <strong data-role="update-title">发现新版本</strong>
+            <button type="button" class="cxh-update-close" data-role="update-close" title="关闭更新提醒">×</button>
+          </div>
+          <div class="cxh-update-note" data-role="update-note"></div>
+          <div class="cxh-update-actions">
+            <button type="button" class="cxh-update-btn" data-role="update-go">去更新</button>
+            <label class="cxh-update-mute">
+              <input type="checkbox" data-role="update-mute">
+              <span>不再提醒</span>
+            </label>
+          </div>
+          <div class="cxh-update-sources" data-role="update-sources" hidden></div>
+          <div class="cxh-update-hint">也可以在扩展设置中检查更新</div>
+        </div>
         <div class="cxh-mode-switch" role="tablist" aria-label="面板模式">
           <button type="button" class="cxh-mode-btn is-active" data-mode="fill" role="tab">填入作业</button>
           <button type="button" class="cxh-mode-btn" data-mode="ai" role="tab">AI 对话</button>
@@ -463,6 +527,7 @@
           <span class="cxh-target-mini" data-role="target" title="自动选择">自动选择</span>
         </div>
       </section>
+      <button type="button" class="cxh-update-pill" data-role="update-pill" hidden>发现新版本</button>
       <button type="button" class="cxh-fab" data-action="expand" title="展开超星辅助助手">
         <span class="cxh-fab-logo">${LOGO_SVG}</span>
         <span>超星辅助助手</span>
@@ -489,6 +554,14 @@
     count: null,
     result: null,
     toast: null,
+    updateCard: null,
+    updateTitle: null,
+    updateNote: null,
+    updateClose: null,
+    updateGo: null,
+    updateMute: null,
+    updateSources: null,
+    updatePill: null,
   };
 
   const state = {
@@ -511,6 +584,8 @@
     autoCollapsed: false,
     manualCollapsed: false,
     collapsedAnchor: null,
+    updateInfo: null,
+    updateDismissed: false,
   };
 
   const savedRanges = new WeakMap();
@@ -1483,6 +1558,14 @@
     ui.count = shadow.querySelector('[data-role="count"]');
     ui.result = shadow.querySelector('[data-role="result"]');
     ui.toast = shadow.querySelector('[data-role="toast"]');
+    ui.updateCard = shadow.querySelector('[data-role="update"]');
+    ui.updateTitle = shadow.querySelector('[data-role="update-title"]');
+    ui.updateNote = shadow.querySelector('[data-role="update-note"]');
+    ui.updateClose = shadow.querySelector('[data-role="update-close"]');
+    ui.updateGo = shadow.querySelector('[data-role="update-go"]');
+    ui.updateMute = shadow.querySelector('[data-role="update-mute"]');
+    ui.updateSources = shadow.querySelector('[data-role="update-sources"]');
+    ui.updatePill = shadow.querySelector('[data-role="update-pill"]');
 
     bindPanelEvents();
     restorePosition();
@@ -1566,6 +1649,21 @@
     ['dragenter', 'dragover', 'drop'].forEach((type) => {
       ui.root.addEventListener(type, (event) => event.stopPropagation());
     });
+
+    if (ui.updateClose) {
+      ui.updateClose.addEventListener('click', () => {
+        dismissUpdateCard(!!(ui.updateMute && ui.updateMute.checked));
+      });
+    }
+    if (ui.updateGo) {
+      ui.updateGo.addEventListener('click', renderUpdateSources);
+    }
+    if (ui.updatePill) {
+      ui.updatePill.addEventListener('click', () => {
+        setCollapsed(false);
+        updatePillVisibility();
+      });
+    }
 
     bindDragHandle();
     window.addEventListener('resize', () => {
@@ -1879,6 +1977,106 @@
     updateSendButton();
   }
 
+  function updatePillVisibility() {
+    if (!ui.updatePill) return;
+    const collapsed = ui.root && ui.root.dataset.collapsed === 'true';
+    ui.updatePill.hidden = !(state.updateInfo && !state.updateDismissed && collapsed);
+  }
+
+  function applyUpdateInfo(info) {
+    state.updateInfo = info;
+    state.updateDismissed = false;
+    const stateData = info.state || {};
+    if (ui.updateTitle) {
+      ui.updateTitle.textContent = `发现新版本 v${stateData.latestVersion || ''}`;
+    }
+    if (ui.updateNote) {
+      ui.updateNote.textContent = String(stateData.notes || '').trim()
+        || `当前版本 v${info.currentVersion}，最新版本 v${stateData.latestVersion}。`;
+    }
+    if (ui.updateCard) ui.updateCard.hidden = false;
+    if (ui.updatePill) {
+      ui.updatePill.textContent = `新版本 v${stateData.latestVersion || ''}`;
+    }
+    updatePillVisibility();
+  }
+
+  function openUpdateUrl(url) {
+    if (!url) return;
+    bridgeRequest('openExternal', { url }, 5000).catch((error) => toast(error.message, 'error'));
+  }
+
+  function makeUpdateSourceButton(title, subtitle, url, password) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'cxh-update-source';
+    const strong = document.createElement('strong');
+    strong.textContent = title;
+    const sub = document.createElement('span');
+    sub.textContent = subtitle || '';
+    button.append(strong, sub);
+    if (password) {
+      const pwd = document.createElement('span');
+      pwd.className = 'cxh-update-password';
+      pwd.textContent = `密码：${password}`;
+      button.appendChild(pwd);
+    }
+    button.addEventListener('click', () => openUpdateUrl(url));
+    return button;
+  }
+
+  function renderUpdateSources() {
+    if (!ui.updateSources || !state.updateInfo) return;
+    if (!ui.updateSources.hidden) return;
+    const info = state.updateInfo.state || {};
+    ui.updateSources.textContent = '';
+    ui.updateSources.appendChild(makeUpdateSourceButton(
+      '从 GitHub 下载',
+      info.githubName || info.releaseUrl || 'GitHub Release',
+      info.githubUrl || info.releaseUrl,
+    ));
+    if (info.otherUrl) {
+      ui.updateSources.appendChild(makeUpdateSourceButton(
+        `从 ${info.otherLabel || '其他渠道'} 下载`,
+        info.otherUrl,
+        info.otherUrl,
+        info.otherPassword,
+      ));
+    } else {
+      const hint = document.createElement('div');
+      hint.className = 'cxh-update-hint';
+      hint.textContent = 'Release 未提供其他下载源。';
+      ui.updateSources.appendChild(hint);
+    }
+    ui.updateSources.hidden = false;
+    if (ui.updateGo) {
+      ui.updateGo.disabled = true;
+      ui.updateGo.textContent = '选择下载源';
+    }
+  }
+
+  function dismissUpdateCard(mute) {
+    const info = state.updateInfo;
+    state.updateDismissed = true;
+    if (ui.updateCard) ui.updateCard.hidden = true;
+    updatePillVisibility();
+    if (!info) return;
+    bridgeRequest('update:dismiss', {
+      mute: !!mute,
+      version: (info.state && info.state.latestVersion) || '',
+    }, 5000).catch(() => {});
+  }
+
+  async function initUpdate() {
+    try {
+      const info = await bridgeRequest('update:get', {}, 20000);
+      if (!info || !info.ok || !info.hasUpdate || !info.shouldPrompt) return;
+      applyUpdateInfo(info);
+    } catch (error) {
+      /* 更新检查失败不影响主功能 */
+    }
+  }
+
   function setCollapsed(collapsed) {
     if (!ui.root) return;
     const before = ui.root.getBoundingClientRect();
@@ -1888,6 +2086,7 @@
       // 记住展开前小控件的位置，最小化时回到这里，而不是固定在面板右下角。
       const anchor = state.collapsedAnchor || { left: before.left, top: before.top };
       ui.root.dataset.collapsed = 'true';
+      updatePillVisibility();
       requestAnimationFrame(() => {
         setRootPosition(anchor.left, anchor.top);
         requestAnimationFrame(() => {
@@ -1903,6 +2102,7 @@
       state.collapsedAnchor = { left: before.left, top: before.top };
     }
     ui.root.dataset.collapsed = 'false';
+    updatePillVisibility();
     window.dispatchEvent(new CustomEvent('cxh-mode-change', {
       detail: { mode: ui.root.dataset.mode || 'fill' },
     }));
@@ -2303,6 +2503,7 @@
     updateSendButton();
     updateTargetLabel();
     resolveAppReady();
+    initUpdate();
     bridgeRequest('prefs:get', {}, 5000).then((prefs) => {
       if (prefs && prefs.mode === 'ai') setMode('ai');
     }).catch(() => {});

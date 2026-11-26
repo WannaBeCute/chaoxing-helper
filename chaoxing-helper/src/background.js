@@ -13,6 +13,12 @@
 
 const SETTINGS_KEY = 'cxh_settings';
 const AI_PORT = 'cxh-ai';
+const UPDATE_REPO = 'WannaBeCute/chaoxing-helper';
+const UPDATE_REPO_URL = `https://github.com/${UPDATE_REPO}`;
+const UPDATE_STATE_KEY = 'cxh_update_state';
+const UPDATE_PREFS_KEY = 'cxh_update_prefs';
+const UPDATE_ALARM = 'cxh-update-check';
+const UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 let fontMapText = '';
 
 function isChaoxingUrl(raw) {
@@ -738,6 +744,253 @@ async function deepseekOcr(payload) {
   }
 }
 
+function storageGet(keys) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(keys, (result) => resolve(result || {}));
+  });
+}
+
+function storageSet(values) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set(values, () => resolve());
+  });
+}
+
+function normalizeUpdatePrefs(value) {
+  return {
+    muted: !!(value && value.muted),
+    dismissedVersion: String(value && value.dismissedVersion || ''),
+    dismissedAt: Number(value && value.dismissedAt) || 0,
+  };
+}
+
+async function readUpdatePrefs() {
+  const stored = await storageGet([UPDATE_PREFS_KEY]);
+  return normalizeUpdatePrefs(stored[UPDATE_PREFS_KEY]);
+}
+
+function versionParts(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^v/i, '')
+    .split('.')
+    .map((part) => {
+      const match = String(part).match(/^\d+/);
+      return match ? Number(match[0]) : 0;
+    });
+}
+
+function compareVersions(left, right) {
+  const a = versionParts(left);
+  const b = versionParts(right);
+  const length = Math.max(a.length, b.length, 3);
+  for (let i = 0; i < length; i += 1) {
+    const x = a[i] || 0;
+    const y = b[i] || 0;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  return 0;
+}
+
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function extractMarkdownSection(body, heading) {
+  const lines = String(body || '').split(/\r?\n/);
+  const headingRe = new RegExp(`^##\\s*${escapeRegExp(heading)}\\s*$`, 'i');
+  let start = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (headingRe.test(lines[i].trim())) {
+      start = i + 1;
+      break;
+    }
+  }
+  if (start < 0) return '';
+  const result = [];
+  for (let i = start; i < lines.length; i += 1) {
+    if (/^##\s+/.test(lines[i])) break;
+    result.push(lines[i]);
+  }
+  return result.join('\n').trim();
+}
+
+function extractDownloadInfo(body) {
+  const section = extractMarkdownSection(body, '📥 下载')
+    || extractMarkdownSection(body, '下载');
+  if (!section) {
+    return { otherLabel: '', otherUrl: '', otherPassword: '' };
+  }
+  const link = section.match(/\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/);
+  const password = section.match(/密码[：:]\s*([^\s\]\)]+)/);
+  const label = link
+    ? link[1].replace(/[，,]\s*密码[：:].*$/, '').trim()
+    : '';
+  return {
+    otherLabel: label,
+    otherUrl: link ? link[2] : '',
+    otherPassword: password ? password[1].replace(/[，,。.]$/, '') : '',
+  };
+}
+
+function describeUpdateState(state, prefs, currentVersion) {
+  const version = currentVersion || chrome.runtime.getManifest().version;
+  const latestVersion = String(state && state.latestVersion || '').replace(/^v/i, '');
+  const hasUpdate = !!latestVersion && compareVersions(latestVersion, version) > 0;
+  const dismissedRecently = prefs.dismissedVersion === latestVersion
+    && prefs.dismissedAt
+    && Date.now() - prefs.dismissedAt < UPDATE_INTERVAL_MS;
+  return {
+    ok: true,
+    currentVersion: version,
+    repoUrl: UPDATE_REPO_URL,
+    hasUpdate,
+    shouldPrompt: hasUpdate && !prefs.muted && !dismissedRecently,
+    muted: prefs.muted,
+    state: {
+      ...(state || {}),
+      latestVersion,
+      hasUpdate,
+    },
+  };
+}
+
+let updateCheckPromise = null;
+
+async function checkForUpdate(force) {
+  if (updateCheckPromise) return updateCheckPromise;
+  updateCheckPromise = (async () => {
+    const stored = await storageGet([UPDATE_STATE_KEY, UPDATE_PREFS_KEY]);
+    const prefs = normalizeUpdatePrefs(stored[UPDATE_PREFS_KEY]);
+    const previous = stored[UPDATE_STATE_KEY] || {};
+    if (!force && previous.checkedAt && Date.now() - previous.checkedAt < UPDATE_INTERVAL_MS) {
+      return describeUpdateState(previous, prefs);
+    }
+    try {
+      const response = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'chaoxing-helper',
+        },
+      });
+      if (response.status === 404) throw new Error('仓库尚未发布 Release');
+      if (!response.ok) throw new Error(`GitHub 请求失败（HTTP ${response.status}）`);
+      const data = await response.json();
+      const latestVersion = String(data.tag_name || data.name || '').replace(/^v/i, '').trim();
+      if (!latestVersion) throw new Error('Release 缺少版本号');
+      const currentVersion = chrome.runtime.getManifest().version;
+      const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
+      const notes = extractMarkdownSection(data.body || '', '更新内容');
+      const download = extractDownloadInfo(data.body || '');
+      const assets = Array.isArray(data.assets) ? data.assets : [];
+      const asset = assets.find((item) => /\.crx$/i.test(item.name || ''))
+        || assets.find((item) => /\.zip$/i.test(item.name || ''))
+        || assets[0];
+      const next = {
+        checkedAt: Date.now(),
+        error: '',
+        latestVersion,
+        currentVersion,
+        hasUpdate,
+        title: data.name || `v${latestVersion}`,
+        releaseUrl: data.html_url || `${UPDATE_REPO_URL}/releases/latest`,
+        notes,
+        githubUrl: asset && asset.browser_download_url
+          ? asset.browser_download_url
+          : (data.html_url || `${UPDATE_REPO_URL}/releases/latest`),
+        githubName: asset && asset.name ? asset.name : 'GitHub Release',
+        otherLabel: download.otherLabel,
+        otherUrl: download.otherUrl,
+        otherPassword: download.otherPassword,
+        publishedAt: data.published_at || '',
+      };
+      await storageSet({ [UPDATE_STATE_KEY]: next });
+      return describeUpdateState(next, prefs);
+    } catch (error) {
+      const failed = {
+        ...previous,
+        checkedAt: Date.now(),
+        error: error && error.message ? error.message : '检查更新失败',
+      };
+      await storageSet({ [UPDATE_STATE_KEY]: failed });
+      return {
+        ok: false,
+        error: failed.error,
+        currentVersion: chrome.runtime.getManifest().version,
+        repoUrl: UPDATE_REPO_URL,
+        muted: prefs.muted,
+        state: failed,
+      };
+    }
+  })();
+  try {
+    return await updateCheckPromise;
+  } finally {
+    updateCheckPromise = null;
+  }
+}
+
+async function getUpdateInfo() {
+  const stored = await storageGet([UPDATE_STATE_KEY, UPDATE_PREFS_KEY]);
+  const prefs = normalizeUpdatePrefs(stored[UPDATE_PREFS_KEY]);
+  const state = stored[UPDATE_STATE_KEY] || {};
+  if (!state.checkedAt || Date.now() - state.checkedAt >= UPDATE_INTERVAL_MS) {
+    return checkForUpdate(false);
+  }
+  return describeUpdateState(state, prefs);
+}
+
+async function dismissUpdate(payload) {
+  const prefs = await readUpdatePrefs();
+  if (payload && payload.mute) {
+    prefs.muted = true;
+  } else {
+    prefs.dismissedVersion = String(payload && payload.version || '');
+    prefs.dismissedAt = Date.now();
+  }
+  await storageSet({ [UPDATE_PREFS_KEY]: prefs });
+  return { ok: true, muted: !!prefs.muted };
+}
+
+async function setUpdateMuted(payload) {
+  const prefs = await readUpdatePrefs();
+  prefs.muted = !!(payload && payload.muted);
+  if (!prefs.muted) {
+    prefs.dismissedVersion = '';
+    prefs.dismissedAt = 0;
+  }
+  await storageSet({ [UPDATE_PREFS_KEY]: prefs });
+  return { ok: true, muted: prefs.muted };
+}
+
+function ensureUpdateAlarm() {
+  try {
+    if (chrome.alarms && chrome.alarms.create) {
+      chrome.alarms.create(UPDATE_ALARM, { periodInMinutes: 24 * 60 });
+    }
+  } catch (error) { /* alarms are optional */ }
+}
+
+function openExternal(payload, sendResponse) {
+  let url;
+  try {
+    url = new URL(String(payload && payload.url || ''));
+  } catch (error) {
+    sendResponse({ ok: false, error: '链接格式不正确' });
+    return;
+  }
+  if (!/^https?:$/.test(url.protocol)) {
+    sendResponse({ ok: false, error: '只允许打开 http(s) 链接' });
+    return;
+  }
+  try {
+    chrome.tabs.create({ url: url.toString() });
+    sendResponse({ ok: true });
+  } catch (error) {
+    sendResponse({ ok: false, error: error && error.message ? error.message : '无法打开链接' });
+  }
+}
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== AI_PORT) return;
   let controller = null;
@@ -773,6 +1026,34 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message && message.type === 'cxh:updateCheck') {
+    checkForUpdate(true)
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ ok: false, error: error && error.message ? error.message : '检查更新失败' }));
+    return true;
+  }
+  if (message && message.type === 'cxh:updateGet') {
+    getUpdateInfo()
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ ok: false, error: error && error.message ? error.message : '检查更新失败' }));
+    return true;
+  }
+  if (message && message.type === 'cxh:updateDismiss') {
+    dismissUpdate(message)
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ ok: false, error: error && error.message ? error.message : '无法保存提醒设置' }));
+    return true;
+  }
+  if (message && message.type === 'cxh:updateSetMuted') {
+    setUpdateMuted(message)
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ ok: false, error: error && error.message ? error.message : '无法保存提醒设置' }));
+    return true;
+  }
+  if (message && message.type === 'cxh:openExternal') {
+    openExternal(message, sendResponse);
+    return true;
+  }
   if (message && message.type === 'cxh:deepseekOcr') {
     deepseekOcr(message)
       .then((result) => sendResponse(result))
@@ -857,3 +1138,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   })();
   return true;
 });
+
+if (chrome.runtime.onInstalled && chrome.runtime.onInstalled.addListener) {
+  chrome.runtime.onInstalled.addListener(() => {
+    ensureUpdateAlarm();
+    checkForUpdate(false).catch(() => {});
+  });
+}
+
+if (chrome.runtime.onStartup && chrome.runtime.onStartup.addListener) {
+  chrome.runtime.onStartup.addListener(() => {
+    ensureUpdateAlarm();
+    checkForUpdate(false).catch(() => {});
+  });
+}
+
+if (chrome.alarms && chrome.alarms.onAlarm && chrome.alarms.onAlarm.addListener) {
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm && alarm.name === UPDATE_ALARM) {
+      checkForUpdate(true).catch(() => {});
+    }
+  });
+}
+
+ensureUpdateAlarm();

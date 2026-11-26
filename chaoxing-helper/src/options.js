@@ -147,6 +147,10 @@ const providerBadgeEl = $('providerBadge');
 const versionEl = $('version');
 const usageTextEl = $('usageText');
 const usageBarEl = $('usageBar');
+const currentVersionEl = $('currentVersion');
+const checkUpdateEl = $('checkUpdate');
+const updateReminderEl = $('updateReminder');
+const updateStatusEl = $('updateStatus');
 
 let currentSettings = null;
 
@@ -432,6 +436,164 @@ function cleanupChats(days) {
   });
 }
 
+function setUpdateStatus(message, type) {
+  if (!updateStatusEl) return;
+  updateStatusEl.textContent = message || '';
+  updateStatusEl.className = 'hint' + (type ? ' ' + type : '');
+}
+
+function closeUpdateModal() {
+  const existing = document.getElementById('cxhUpdateModal');
+  if (existing) existing.remove();
+}
+
+function openExternalUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(String(url || ''));
+  } catch (error) {
+    setUpdateStatus('下载链接无效。', 'error');
+    return;
+  }
+  if (!/^https?:$/.test(parsed.protocol)) {
+    setUpdateStatus('只允许打开 http(s) 链接。', 'error');
+    return;
+  }
+  chrome.tabs.create({ url: parsed.toString() });
+}
+
+function makeSourceButton(title, subtitle, url, password) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'update-source';
+  const strong = document.createElement('strong');
+  strong.textContent = title;
+  const sub = document.createElement('span');
+  sub.textContent = subtitle || '';
+  button.append(strong, sub);
+  if (password) {
+    const pwd = document.createElement('span');
+    pwd.className = 'update-password';
+    pwd.textContent = `密码：${password}`;
+    button.appendChild(pwd);
+  }
+  button.addEventListener('click', () => openExternalUrl(url));
+  return button;
+}
+
+function showUpdateModal(kind, data) {
+  closeUpdateModal();
+  const overlay = document.createElement('div');
+  overlay.className = 'update-modal';
+  overlay.id = 'cxhUpdateModal';
+  const card = document.createElement('div');
+  card.className = 'update-modal-card';
+  const heading = document.createElement('h3');
+  const meta = document.createElement('div');
+  meta.className = 'update-modal-meta';
+  const actions = document.createElement('div');
+  actions.className = 'update-modal-actions';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'btn';
+  close.textContent = '关闭';
+  close.addEventListener('click', closeUpdateModal);
+  const currentVersion = (data && data.currentVersion) || chrome.runtime.getManifest().version;
+  const repoUrl = (data && data.repoUrl) || 'https://github.com/WannaBeCute/chaoxing-helper';
+
+  if (kind === 'failure') {
+    heading.textContent = '检查更新失败';
+    meta.textContent = (data && data.error) || '无法获取 GitHub Release 信息。';
+    const repo = document.createElement('button');
+    repo.type = 'button';
+    repo.className = 'btn';
+    repo.textContent = '打开 GitHub 仓库';
+    repo.addEventListener('click', () => openExternalUrl(repoUrl));
+    actions.append(repo, close);
+    card.append(heading, meta, actions);
+  } else if (kind === 'latest') {
+    heading.textContent = '已是最新版本';
+    meta.textContent = `当前版本 v${currentVersion}，GitHub 上没有更新的 Release。`;
+    actions.append(close);
+    card.append(heading, meta, actions);
+  } else {
+    const state = (data && data.state) || {};
+    heading.textContent = `发现新版本 v${state.latestVersion || ''}`;
+    meta.textContent = `当前版本 v${currentVersion}。更新内容来自 GitHub Release。`;
+    if (state.notes) {
+      const notes = document.createElement('div');
+      notes.className = 'update-modal-notes';
+      notes.textContent = state.notes;
+      card.appendChild(notes);
+    }
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'btn primary';
+    go.textContent = '去更新';
+    const sourceList = document.createElement('div');
+    sourceList.className = 'update-source-list';
+    const showSources = () => {
+      actions.remove();
+      if (sourceList.childElementCount) return;
+      sourceList.appendChild(makeSourceButton(
+        '从 GitHub 下载',
+        state.githubName || state.releaseUrl || repoUrl,
+        state.githubUrl || state.releaseUrl || repoUrl,
+      ));
+      if (state.otherUrl) {
+        const label = state.otherLabel || '其他渠道';
+        sourceList.appendChild(makeSourceButton(
+          `从 ${label} 下载`,
+          state.otherUrl,
+          state.otherUrl,
+          state.otherPassword,
+        ));
+      } else {
+        const hint = document.createElement('p');
+        hint.className = 'hint';
+        hint.textContent = 'Release 未提供其他下载源。';
+        sourceList.appendChild(hint);
+      }
+      card.appendChild(sourceList);
+    };
+    go.addEventListener('click', showSources);
+    actions.append(go, close);
+    card.append(heading, meta, actions);
+  }
+
+  overlay.appendChild(card);
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) closeUpdateModal();
+  });
+  document.body.appendChild(overlay);
+}
+
+function loadUpdateInfo() {
+  if (currentVersionEl) {
+    currentVersionEl.textContent = 'v' + chrome.runtime.getManifest().version;
+  }
+  chrome.runtime.sendMessage({ type: 'cxh:updateGet' }, (response) => {
+    if (chrome.runtime.lastError) {
+      setUpdateStatus(`检查更新失败：${chrome.runtime.lastError.message}`, 'error');
+      return;
+    }
+    if (!response) return;
+    if (response.currentVersion && currentVersionEl) {
+      currentVersionEl.textContent = 'v' + response.currentVersion;
+    }
+    if (updateReminderEl && typeof response.muted === 'boolean') {
+      updateReminderEl.checked = !response.muted;
+    }
+    if (response.ok && response.hasUpdate) {
+      setUpdateStatus(`发现新版本 v${response.state.latestVersion}，点击“检查更新”查看。`);
+    } else if (response.ok) {
+      setUpdateStatus(`当前 v${response.currentVersion}，已是最新版本。`);
+    } else if (response.state && response.state.error) {
+      setUpdateStatus(`上次检查失败：${response.state.error}`, 'error');
+    }
+  });
+}
+
 function load() {
   fillProviders();
   fillExtractProviders();
@@ -455,6 +617,7 @@ function load() {
     updateExtractVisibility();
     updateUsage();
     versionEl.textContent = 'v' + chrome.runtime.getManifest().version;
+    loadUpdateInfo();
   });
 }
 
@@ -612,6 +775,51 @@ $('save').addEventListener('click', () => {
       updateUsage();
       setStatus('设置已保存。', 'ok');
     });
+  });
+});
+
+checkUpdateEl.addEventListener('click', () => {
+  checkUpdateEl.disabled = true;
+  setUpdateStatus('正在检查更新…');
+  chrome.runtime.sendMessage({ type: 'cxh:updateCheck' }, (response) => {
+    checkUpdateEl.disabled = false;
+    if (chrome.runtime.lastError) {
+      const message = chrome.runtime.lastError.message;
+      setUpdateStatus(`检查更新失败：${message}`, 'error');
+      showUpdateModal('failure', { error: message });
+      return;
+    }
+    if (!response || !response.ok) {
+      const message = response && response.error || '无法获取 GitHub Release 信息。';
+      setUpdateStatus(`检查更新失败：${message}`, 'error');
+      showUpdateModal('failure', response || { error: message });
+      return;
+    }
+    if (response.currentVersion && currentVersionEl) {
+      currentVersionEl.textContent = 'v' + response.currentVersion;
+    }
+    if (response.hasUpdate) {
+      setUpdateStatus(`发现新版本 v${response.state.latestVersion}。`);
+      showUpdateModal('update', response);
+    } else {
+      setUpdateStatus(`当前 v${response.currentVersion}，已是最新版本。`, 'ok');
+      showUpdateModal('latest', response);
+    }
+  });
+});
+
+updateReminderEl.addEventListener('change', () => {
+  const muted = !updateReminderEl.checked;
+  chrome.runtime.sendMessage({ type: 'cxh:updateSetMuted', muted }, (response) => {
+    if (chrome.runtime.lastError || !response || !response.ok) {
+      updateReminderEl.checked = !muted;
+      setUpdateStatus('保存提醒设置失败。', 'error');
+      return;
+    }
+    setUpdateStatus(
+      muted ? '已关闭启动更新提醒，可在设置中重新开启。' : '已恢复启动更新提醒。',
+      'ok',
+    );
   });
 });
 

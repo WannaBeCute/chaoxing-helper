@@ -142,6 +142,21 @@
       <p>超星页面上的填入、图片/附件上传仍由扩展调用页面自身接口完成；AI 回复不会自动写入作业，需要你在对话里点击“填入当前光标”。</p>
       <p>本扩展以 GPL-3.0 开源；超星字体解码算法与映射表来自 <a class="link" href="https://github.com/Samueli924/chaoxing" target="_blank" rel="noreferrer">Samueli924/chaoxing</a>（GPL-3.0）。</p>
     </section>
+
+    <section class="card update-card">
+      <div class="card-head">
+        <h2>版本更新</h2>
+        <span class="badge" id="currentVersion"></span>
+      </div>
+      <div class="update-actions">
+        <button type="button" class="btn" id="checkUpdate">检查更新</button>
+        <label class="check">
+          <input type="checkbox" id="updateReminder" checked>
+          <span>接收启动更新提醒</span>
+        </label>
+      </div>
+      <p class="hint" id="updateStatus">从 GitHub Release 检查新版本。</p>
+    </section>
   </div>
   <script src="options.js"></script>
 </body>

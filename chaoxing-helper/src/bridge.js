@@ -418,6 +418,44 @@
         reply(requestId, true, text);
         return;
       }
+      case 'update:get': {
+        const response = await sendRuntimeMessage({ type: 'cxh:updateGet' });
+        reply(requestId, true, response);
+        return;
+      }
+      case 'update:check': {
+        const response = await sendRuntimeMessage({ type: 'cxh:updateCheck' });
+        reply(requestId, true, response);
+        return;
+      }
+      case 'update:dismiss': {
+        const response = await sendRuntimeMessage({
+          type: 'cxh:updateDismiss',
+          mute: !!(payload && payload.mute),
+          version: payload && payload.version,
+        });
+        if (!response.ok) throw new Error(response.error || '无法保存提醒设置');
+        reply(requestId, true, response);
+        return;
+      }
+      case 'update:setMuted': {
+        const response = await sendRuntimeMessage({
+          type: 'cxh:updateSetMuted',
+          muted: !!(payload && payload.muted),
+        });
+        if (!response.ok) throw new Error(response.error || '无法保存提醒设置');
+        reply(requestId, true, response);
+        return;
+      }
+      case 'openExternal': {
+        const response = await sendRuntimeMessage({
+          type: 'cxh:openExternal',
+          url: payload && payload.url,
+        });
+        if (!response.ok) throw new Error(response.error || '无法打开链接');
+        reply(requestId, true, { ok: true });
+        return;
+      }
       case 'deepseekOcr': {
         const response = await sendRuntimeMessage({
           type: 'cxh:deepseekOcr',
