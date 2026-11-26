@@ -4,7 +4,8 @@
  * 只负责需要扩展权限的网络请求：
  * - OpenAI 兼容接口的流式对话
  * - API 连接测试
- * - 后续阶段的 OCR / 文档解析（通过 offscreen 文档）
+ * - 文件识别模型（Chat Completions / Responses API）
+ * - DeepSeek 官方 OCR（可选回退）
  *
  * API Key 只从 chrome.storage.local 读取，不暴露给页面。
  */
@@ -42,7 +43,12 @@ const DEFAULT_SETTINGS = {
   apiKey: '',
   supportsVision: true,
   contextWindow: 128000,
-  extractModel: '',
+  extractEnabled: false,
+  extractProvider: 'openai',
+  extractEndpoint: 'https://api.openai.com/v1',
+  extractModel: 'gpt-4o-mini',
+  extractApiKey: '',
+  extractApiMode: 'auto',
   autoDeleteDays: 0,
 };
 
@@ -210,10 +216,42 @@ function isDeepSeekEndpoint(endpoint) {
   return /api\.deepseek\.com/i.test(String(endpoint || ''));
 }
 
-function extractModelName(settings) {
-  const model = String(settings && settings.extractModel || '').trim();
-  if (model) return model;
-  return settings && settings.supportsVision ? String(settings.model || '').trim() : '';
+function isLocalEndpoint(endpoint) {
+  try {
+    const host = new URL(String(endpoint || '')).hostname.toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  } catch (error) {
+    return false;
+  }
+}
+
+function resolveApiTarget(endpoint, mode) {
+  const raw = String(endpoint || '').trim();
+  if (!raw) throw new Error('请先填写文件识别模型 Endpoint');
+  const url = new URL(raw);
+  let path = url.pathname.replace(/\/+$/, '');
+  const requested = mode === 'chat' || mode === 'responses' ? mode : '';
+  let detected = '';
+  if (/\/responses$/i.test(path)) detected = 'responses';
+  else if (/\/chat\/completions$/i.test(path)) detected = 'chat';
+  const finalMode = requested || detected || 'chat';
+  path = path.replace(/\/chat\/completions$/i, '').replace(/\/responses$/i, '');
+  path += finalMode === 'responses' ? '/responses' : '/chat/completions';
+  url.pathname = path || (finalMode === 'responses' ? '/responses' : '/chat/completions');
+  return { url: url.toString(), mode: finalMode };
+}
+
+function getExtractConfig(settings) {
+  if (!settings || !settings.extractEnabled) return null;
+  const endpoint = String(settings.extractEndpoint || '').trim();
+  const model = String(settings.extractModel || '').trim();
+  if (!endpoint || !model) throw new Error('文件识别模型已开启，请填写 Endpoint 和模型。');
+  return {
+    endpoint,
+    model,
+    apiKey: String(settings.extractApiKey || '').trim(),
+    mode: settings.extractApiMode || 'auto',
+  };
 }
 
 function completionContent(data) {
@@ -249,17 +287,38 @@ function utf8ToBase64(text) {
   return arrayBufferToBase64(new TextEncoder().encode(String(text || '')).buffer);
 }
 
-async function requestJson(settings, body, timeoutMs) {
-  const endpoint = normalizeChatUrl(settings.endpoint);
-  if (!settings.apiKey && settings.provider !== 'ollama') {
-    throw new Error('尚未填写 API Key，请到扩展设置中填写有效的 API。');
+function responsesContent(data) {
+  if (!data) return '';
+  if (typeof data.output_text === 'string') return data.output_text;
+  const parts = [];
+  if (Array.isArray(data.output)) {
+    data.output.forEach((item) => {
+      if (typeof item === 'string') {
+        parts.push(item);
+        return;
+      }
+      if (!item || !Array.isArray(item.content)) return;
+      item.content.forEach((part) => {
+        if (!part) return;
+        if (typeof part.text === 'string') parts.push(part.text);
+        else if (typeof part.output_text === 'string') parts.push(part.output_text);
+      });
+    });
+  }
+  if (parts.length) return parts.join('');
+  return completionContent(data);
+}
+
+async function requestJsonTo(url, apiKey, body, timeoutMs) {
+  if (!apiKey && !isLocalEndpoint(url)) {
+    throw new Error('请填写文件识别模型的 API Key。');
   }
   const headers = { 'Content-Type': 'application/json' };
-  if (settings.apiKey) headers.Authorization = `Bearer ${settings.apiKey}`;
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs || 180000);
   try {
-    const response = await fetch(endpoint, {
+    const response = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -316,35 +375,58 @@ async function resolveImageDataUrl(payload) {
 
 async function extractImageText(payload) {
   const settings = await readSettings();
-  const model = extractModelName(settings);
-  if (!model) throw new Error('未配置文件识别模型，主模型也不支持多模态。');
-  if (!settings.apiKey && settings.provider !== 'ollama') {
-    throw new Error('请先在设置中填写 API Key。');
+  let config = getExtractConfig(settings);
+  if (!config) {
+    if (!settings.supportsVision || !settings.model) {
+      throw new Error('未开启文件识别模型，主模型也不支持多模态。');
+    }
+    config = {
+      endpoint: settings.endpoint,
+      model: settings.model,
+      apiKey: settings.apiKey,
+      mode: 'chat',
+    };
   }
+  const target = resolveApiTarget(config.endpoint, config.mode);
   const dataUrl = await resolveImageDataUrl(payload || {});
   const prompt = String(payload && payload.prompt || '').trim()
     || '请提取这张图片中的全部文字，按原有顺序输出；如果是题目截图，请保留题号、选项和公式；不要解题，不要添加解释。';
-  const data = await requestJson(settings, {
-    model,
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'text', text: prompt },
-        { type: 'image_url', image_url: { url: dataUrl } },
-      ],
-    }],
-    stream: false,
-    temperature: 0,
-  }, 180000);
+  let data;
+  if (target.mode === 'responses') {
+    data = await requestJsonTo(target.url, config.apiKey, {
+      model: config.model,
+      input: [{
+        role: 'user',
+        content: [
+          { type: 'input_text', text: prompt },
+          { type: 'input_image', image_url: dataUrl },
+        ],
+      }],
+    }, 180000);
+  } else {
+    data = await requestJsonTo(target.url, config.apiKey, {
+      model: config.model,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: dataUrl } },
+        ],
+      }],
+      stream: false,
+      temperature: 0,
+    }, 180000);
+  }
   return {
     ok: true,
-    model,
-    text: completionContent(data).trim(),
+    model: config.model,
+    mode: target.mode,
+    text: (target.mode === 'responses' ? responsesContent(data) : completionContent(data)).trim(),
   };
 }
 
-async function uploadDeepSeekFile(settings, base64, name, type, purpose) {
-  const origin = new URL(settings.endpoint).origin;
+async function uploadDeepSeekFile(config, base64, name, type, purpose) {
+  const origin = new URL(config.endpoint).origin;
   const blob = base64ToBlob(base64, type);
   const form = new FormData();
   form.append('purpose', purpose);
@@ -354,7 +436,7 @@ async function uploadDeepSeekFile(settings, base64, name, type, purpose) {
   try {
     const response = await fetch(`${origin}/files`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${settings.apiKey}` },
+      headers: { Authorization: `Bearer ${config.apiKey}` },
       body: form,
       signal: controller.signal,
     });
@@ -383,39 +465,80 @@ async function uploadDeepSeekFile(settings, base64, name, type, purpose) {
   }
 }
 
+const DOCUMENT_EXTRACT_PROMPT = '请提取并输出这个文档中的全部可见文字，保留题号、选项、表格和公式；不要总结，不要解题，不要添加解释。';
+
 async function extractDocumentText(payload) {
   const settings = await readSettings();
-  const model = String(settings.extractModel || '').trim();
-  if (!model) throw new Error('未配置文件识别模型。');
-  if (!settings.apiKey && settings.provider !== 'ollama') {
-    throw new Error('请先在设置中填写 API Key。');
-  }
-  if (!isDeepSeekEndpoint(settings.endpoint)) {
-    throw new Error('当前 Endpoint 不支持标准文档解析；请把文件识别模型配置为 DeepSeek 模型（如 deepseek-flash）。');
-  }
+  const config = getExtractConfig(settings);
+  if (!config) throw new Error('未开启文件识别模型。');
+  const target = resolveApiTarget(config.endpoint, config.mode);
   const base64 = String(payload && payload.data || '');
   if (!base64) throw new Error('附件内容为空');
   if (base64.length > 140 * 1024 * 1024) throw new Error('附件过大，请上传不超过 100MB 的文件。');
   const name = String(payload && payload.name || 'attachment');
   const type = String(payload && (payload.mimeType || payload.fileType) || 'application/octet-stream');
   const isText = /^text\//i.test(type) || /\.(txt|md|csv|json|log|xml|html?)$/i.test(name);
-  const fileId = await uploadDeepSeekFile(settings, base64, name, type, isText ? 'user_data' : 'text_recognition');
-  const data = await requestJson(settings, {
-    model,
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'file', file_id: fileId },
-        { type: 'text', text: '请提取并输出这个文档中的全部可见文字，保留题号、选项、表格和公式；不要总结，不要解题，不要添加解释。' },
-      ],
-    }],
-    stream: false,
-    temperature: 0,
-  }, 180000);
+  const deepSeek = isDeepSeekEndpoint(config.endpoint);
+  if (!deepSeek && target.mode !== 'responses') {
+    throw new Error('当前文件识别接口为 Chat Completions，不支持直接上传 PDF/Word；请把接口类型改为 Responses API，或改用图片附件。');
+  }
+  let fileId = '';
+  let body;
+  if (deepSeek) {
+    fileId = await uploadDeepSeekFile(
+      config,
+      base64,
+      name,
+      type,
+      isText ? 'user_data' : 'text_recognition',
+    );
+    if (target.mode === 'responses') {
+      body = {
+        model: config.model,
+        input: [{
+          role: 'user',
+          content: [
+            { type: 'input_file', file_id: fileId },
+            { type: 'input_text', text: DOCUMENT_EXTRACT_PROMPT },
+          ],
+        }],
+      };
+    } else {
+      body = {
+        model: config.model,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'file', file_id: fileId },
+            { type: 'text', text: DOCUMENT_EXTRACT_PROMPT },
+          ],
+        }],
+        stream: false,
+        temperature: 0,
+      };
+    }
+  } else {
+    body = {
+      model: config.model,
+      input: [{
+        role: 'user',
+        content: [
+          {
+            type: 'input_file',
+            filename: name,
+            file_data: `data:${type};base64,${base64}`,
+          },
+          { type: 'input_text', text: DOCUMENT_EXTRACT_PROMPT },
+        ],
+      }],
+    };
+  }
+  const data = await requestJsonTo(target.url, config.apiKey, body, 180000);
   return {
     ok: true,
-    model,
-    text: completionContent(data).trim(),
+    model: config.model,
+    mode: target.mode,
+    text: (target.mode === 'responses' ? responsesContent(data) : completionContent(data)).trim(),
     fileId,
   };
 }
@@ -424,63 +547,119 @@ const TEST_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAA
 
 async function testExtractModel(payload) {
   const settings = await readSettings(payload && payload.settings);
-  const model = String(settings.extractModel || '').trim() || String(settings.model || '').trim();
-  if (!model) throw new Error('请先填写文件识别模型。');
+  const config = getExtractConfig(settings);
+  if (!config) throw new Error('请先开启并填写文件识别模型。');
+  const target = resolveApiTarget(config.endpoint, config.mode);
   const result = {
     ok: true,
-    model,
+    model: config.model,
+    mode: target.mode,
     vision: false,
     document: false,
+    documentTested: false,
     visionDetail: '',
     documentDetail: '',
   };
-  try {
-    const data = await requestJson(settings, {
-      model,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'text', text: '这张纯色图片的主色是什么？只回复颜色名称。' },
-          { type: 'image_url', image_url: { url: TEST_IMAGE_DATA_URL } },
-        ],
-      }],
-      stream: false,
-      temperature: 0,
-    }, 90000);
-    result.vision = true;
-    result.visionDetail = completionContent(data).trim().slice(0, 80);
-  } catch (error) {
-    result.visionDetail = error && error.message ? error.message : '图片检测失败';
-  }
 
-  if (isDeepSeekEndpoint(settings.endpoint)) {
-    try {
-      const fileId = await uploadDeepSeekFile(
-        settings,
-        utf8ToBase64('超星辅助助手文件识别能力检测，文档中的数字是 42。'),
-        'cxh-test.txt',
-        'text/plain',
-        'user_data',
-      );
-      const data = await requestJson(settings, {
-        model,
+  try {
+    let data;
+    if (target.mode === 'responses') {
+      data = await requestJsonTo(target.url, config.apiKey, {
+        model: config.model,
+        input: [{
+          role: 'user',
+          content: [
+            { type: 'input_text', text: '这张纯色图片的主色是什么？只回复颜色名称。' },
+            { type: 'input_image', image_url: TEST_IMAGE_DATA_URL },
+          ],
+        }],
+      }, 90000);
+    } else {
+      data = await requestJsonTo(target.url, config.apiKey, {
+        model: config.model,
         messages: [{
           role: 'user',
           content: [
-            { type: 'file', file_id: fileId },
-            { type: 'text', text: '文档中的数字是多少？只回复数字。' },
+            { type: 'text', text: '这张纯色图片的主色是什么？只回复颜色名称。' },
+            { type: 'image_url', image_url: { url: TEST_IMAGE_DATA_URL } },
           ],
         }],
         stream: false,
         temperature: 0,
+      }, 90000);
+    }
+    result.vision = true;
+    result.visionDetail = (target.mode === 'responses' ? responsesContent(data) : completionContent(data))
+      .trim().slice(0, 80);
+  } catch (error) {
+    result.visionDetail = error && error.message ? error.message : '图片检测失败';
+  }
+
+  const deepSeek = isDeepSeekEndpoint(config.endpoint);
+  const testBase64 = utf8ToBase64('超星辅助助手文件识别能力检测，文档中的数字是 42。');
+  const testName = 'cxh-test.txt';
+  try {
+    let data;
+    if (deepSeek) {
+      result.documentTested = true;
+      const fileId = await uploadDeepSeekFile(
+        config,
+        testBase64,
+        testName,
+        'text/plain',
+        'user_data',
+      );
+      if (target.mode === 'responses') {
+        data = await requestJsonTo(target.url, config.apiKey, {
+          model: config.model,
+          input: [{
+            role: 'user',
+            content: [
+              { type: 'input_file', file_id: fileId },
+              { type: 'input_text', text: '文档中的数字是多少？只回复数字。' },
+            ],
+          }],
+        }, 120000);
+      } else {
+        data = await requestJsonTo(target.url, config.apiKey, {
+          model: config.model,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'file', file_id: fileId },
+              { type: 'text', text: '文档中的数字是多少？只回复数字。' },
+            ],
+          }],
+          stream: false,
+          temperature: 0,
+        }, 120000);
+      }
+      result.document = true;
+      result.documentDetail = (target.mode === 'responses' ? responsesContent(data) : completionContent(data))
+        .trim().slice(0, 80);
+    } else if (target.mode === 'responses') {
+      result.documentTested = true;
+      data = await requestJsonTo(target.url, config.apiKey, {
+        model: config.model,
+        input: [{
+          role: 'user',
+          content: [
+            {
+              type: 'input_file',
+              filename: testName,
+              file_data: `data:text/plain;base64,${testBase64}`,
+            },
+            { type: 'input_text', text: '文档中的数字是多少？只回复数字。' },
+          ],
+        }],
       }, 120000);
       result.document = true;
-      result.documentDetail = completionContent(data).trim().slice(0, 80);
-    } catch (error) {
-      result.documentDetail = error && error.message ? error.message : '文档检测失败';
+      result.documentDetail = responsesContent(data).trim().slice(0, 80);
+    } else {
+      result.documentDetail = '当前接口为 Chat Completions，未检测文档上传；PDF/Word 请使用 Responses API 端点或 DeepSeek Files API。';
     }
-  } else {
-    result.documentDetail = '当前 Endpoint 未提供标准文档解析，仅检测了图片；PDF/Word 请使用 DeepSeek 模型或 DeepSeek OCR。';
+  } catch (error) {
+    result.documentDetail = error && error.message ? error.message : '文档检测失败';
   }
   return result;
 }

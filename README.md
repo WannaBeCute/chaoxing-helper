@@ -11,9 +11,10 @@
 - **无编辑器收起**：没有作业输入框时只显示可拖动悬浮球，不自动展开。
 - **题目提取**：支持 `.questionLi` 与章节测验 `.TiMu / .Zy_TItle`，递归扫描同源 iframe，并解密 `font-cxsecret` 字体；检测到题目图片时可选择调用多模态模型识别。
 - **AI 对话**：OpenAI 兼容接口、流式输出、完整 Markdown 渲染、代码高亮与复制、重新生成，并在每条 AI 消息上方显示本次/累计 tokens。
-- **多模态上传**：模型支持多模态且开启“模型识图”时，可上传图片；DeepSeek 厂商还可通过官方 OCR API 上传 PDF/Word/PPT/图片并提取文本。
-- **文件识别模型**：可单独配置一个只负责内容提取、不参与对话的多模态模型；填写后，上传的图片/文档和题目图片优先调用该模型。
-- **DeepSeek 文档解析 / OCR**：文件识别模型为 DeepSeek 时，通过官方 Files API（`POST /files` + `file_id`）解析 PDF/Word/PPT；也可使用官方 OCR（`https://api.deepseek.com/v1/tools/ocr`）。附件只保留当前页面，刷新后清除。
+- **多模态上传**：主模型支持多模态且开启“模型识图”时，可上传图片。
+- **文件识别模型**：独立开关（默认关闭），可配置单独的 Endpoint、API Key 和多模态模型；开启后上传的图片/文档和题目图片优先调用该模型，不参与对话。
+- **通用多模态调用**：自动区分 Chat Completions（`image_url` / `text`）与 Responses API（`input_image` / `input_text`），支持 OpenAI、DeepSeek、火山方舟等兼容端点。
+- **文档解析**：DeepSeek 端点通过官方 Files API（`POST /files` + `file_id`）解析 PDF/Word/PPT；其他 Responses API 端点尝试 `input_file`。附件只保留当前页面，刷新后清除。
 - **对话管理**：新建草稿、刷新列表、重命名/删除、绑定 Chaoxing 页面、跳转、最近绑定对话自动打开。
 - **对话缓存**：本地 `chrome.storage.local`，8MB / 30 个对话软上限，超限提示清理；7 天清理默认关闭。
 - **设置持久化**：API 配置、文件识别模型、面板模式、识图开关、最近对话均会保存。
@@ -73,53 +74,42 @@
 
 设置页支持：
 
-- OpenAI 兼容预设：OpenAI、DeepSeek、月之暗面 Kimi、智谱 GLM、通义千问、硅基流动、Ollama、自定义。
+- OpenAI 兼容预设：OpenAI、DeepSeek、火山方舟（Ark）、月之暗面 Kimi、智谱 GLM、通义千问、硅基流动、Ollama、自定义。
 - Endpoint、API Key、Model，以及“获取 API”链接。
 - 预设模型的多模态能力与上下文长度由内置配置自动填写并只读；自定义模型可手动填写。
-- 已包含 `deepseek-flash`、`gpt-4.1`、`kimi-k2`、`glm-4.5`、`qwen2.5vl` 等模型。
-- `deepseek-flash` 按官方文档标记为支持图像理解/多模态。
-- **文件识别模型（可选）**：填写一个模型名后，上传的图片和题目图片会优先调用它提取内容；它不参与对话。若当前 Endpoint 是 DeepSeek，PDF/Word/PPT 也会优先用该模型解析。留空时图片使用主模型（若支持多模态），文档使用 DeepSeek OCR。
-- 设置页提供“检测图片/文档能力”按钮，会实际发起少量调用，判断该模型是否支持图片输入和文档解析；也可用仓库中的 `chaoxing-helper/scripts/test-extract-model.mjs` 在命令行检测。
-- 文件识别模型为 DeepSeek 时，文档通过官方 Files API 解析：
-  - 上传：`POST https://api.deepseek.com/files`（`purpose=text_recognition`，纯文本用 `user_data`）
-  - 对话：在 `deepseek-flash` 请求中引用 `{ "type": "file", "file_id": "..." }`
-  - PDF/Word/PPT 解析按页计费；单个文件最大 100MB。
-- 未配置文件识别模型时，DeepSeek 用户仍可使用官方 OCR：`https://api.deepseek.com/v1/tools/ocr`，单个附件限制 20MB。
-- 参考：[OCR 文档](https://api-docs.deepseek.com/zh-cn/guides/ocr/)、[文件解析](https://api-docs.deepseek.com/zh-cn/guides/document_parsing/)。
+- 已包含 `deepseek-flash`、`gpt-4.1`、`doubao-seed-2-1-pro-260915`、`kimi-latest`、`glm-4v-flash`、`qwen-vl-max` 等模型。
+- **文件识别模型**：独立开关，默认关闭。开启后可单独填写 Endpoint、API Key、模型和接口类型；模型下拉只列多模态模型，也可以手动填写模型名。
+- **接口类型**：
+  - `自动识别`：Endpoint 以 `/responses` 结尾时使用 Responses API，否则使用 Chat Completions。
+  - `Chat Completions`：请求 `/chat/completions`，图片块 `image_url`，文本块 `text`。
+  - `Responses API`：请求 `/responses`，图片块 `input_image`，文本块 `input_text`。
+  - 两种块名不能混用，混用通常返回 HTTP 400。
+- **文档解析**：
+  - DeepSeek Endpoint：官方 Files API（`POST /files` + `file_id`）；Chat 引用 `{ "type": "file", "file_id": "..." }`，Responses 引用 `{ "type": "input_file", "file_id": "..." }`。
+  - 其他 Responses API Endpoint：尝试 `input_file` + `file_data` 内联文件。
+  - Chat Completions 的非 DeepSeek Endpoint 没有标准文档上传方式，只支持图片输入。
+- 设置页提供“检测图片/文档能力”按钮，会实际发起少量调用，判断该模型是否支持图片输入和文档解析；也可用 `chaoxing-helper/scripts/test-extract-model.mjs` 在命令行检测。
+- 参考：[DeepSeek Responses API](https://api-docs.deepseek.com/zh-cn/guides/responses_api/)、[DeepSeek 文件解析](https://api-docs.deepseek.com/zh-cn/guides/document_parsing/)、[火山方舟](https://ark.volcengine.com/region:cn-beijing/docs/quick-start)。
 - 测试连接、保存设置。
 
-当前仅支持 OpenAI 兼容接口，不支持 Claude / Gemini 原生协议。自定义厂商请填写兼容 `/chat/completions` 的 Endpoint。
+主对话仍使用 OpenAI 兼容 Chat Completions；文件识别模型可选 Chat Completions 或 Responses API。暂不支持 Claude / Gemini 原生协议。
 
 ## 隐私与安全
 
-- API Key 保存在本机 `chrome.storage.local`，**不加密**，不会回传给网页；请勿在共享电脑上保存密钥。
+- 主模型与文件识别模型的 API Key 都保存在本机 `chrome.storage.local`，**不加密**，不会回传给网页；请勿在共享电脑上保存密钥。
 - AI 对话会把题目文本、你发送的文本/图片和对话内容发送给你配置的 API 服务商。
 - 使用文件识别模型时，上传的图片/文档和题目图片会发送给该模型所在的 API；使用 DeepSeek 文档解析或 OCR 时，文件会发送到 DeepSeek 官方接口，仅用于提取文字。
 - 上传给 AI 的附件只存在于当前页面内存，不写入对话缓存；刷新页面后清除。对话缓存只保留文字和附件名称。
 - 填入作业的图片/附件会通过超星页面自身接口上传到超星，这是作业内容的一部分。
 - 本扩展不收集统计、不上传浏览记录。
 
-## 本地识别依赖（计划中）
-
-主 CRX 约 **0.83MB**。OCR / PDF / Word 依赖体积较大，不会直接打进主包。
-
-计划中的方式：
-
-- 单独提供可选的“本地识别依赖包”；
-- 设置页显示安装状态、版本，支持验证和卸载；
-- 安装并验证后，本地 OCR / PDF / Word 可用，AI 文件上传不再受“必须多模态”的限制；
-- 卸载后恢复仅多模态上传；
-- DeepSeek 用户当前可以直接使用官方 OCR / 文档解析处理 AI 附件，不依赖本地 OCR 包。
-- 需要完全离线的 OCR / PDF / Word 时，仍需等待本地识别依赖包。
-
-> 当前版本 **尚未实现依赖包安装器**。由于 Chrome MV3 不允许扩展直接执行任意外部 JS，依赖包需要采用独立扩展包或沙箱运行时方案，具体形式将在后续版本确定。设置页暂不显示未完成的本地 OCR/题目图片自动识别开关。
-
 ## 已知限制
 
 - 题目提取只支持 `.questionLi` / `.TiMu` 结构及同源 iframe；跨域 iframe、PDF/PPT/图片课件无法纯 DOM 提取。
-- 本地 OCR、PDF、Word 识别尚未接入；DeepSeek 用户可使用官方文档解析/OCR，但需要有效的 DeepSeek API Key，并按官方页面计费。
-- 文件识别模型处理 PDF/Word 目前要求 DeepSeek Endpoint（如 `deepseek-flash`）；其他厂商的模型可用于图片识别，但文档需走 DeepSeek OCR。
-- DeepSeek OCR 单个附件当前限制 20MB；Files API 文档最大 100MB、最多 1000 页。
+- 文件识别模型的图片能力取决于所选模型；纯文本模型会在能力检测或调用时报错。
+- 文档解析取决于服务商接口：DeepSeek 使用 Files API，Responses API 端点尝试 `input_file`；Chat Completions 的非 DeepSeek 端点不支持直接上传 PDF/Word。
+- DeepSeek Files API 文档最大 100MB、最多 1000 页；DeepSeek OCR 回退单个附件限制 20MB。
+- 各厂商对 Responses API 的字段支持可能不同，混用 `image_url` 与 `input_image` 会返回 HTTP 400；请在设置中选择正确的接口类型。
 - 预设模型能力来自内置配置，服务商调整 API 后可能需要更新；请以官方文档为准。
 - API Key 只保存在本地扩展存储，不加密。
 - 本项目与超星学习通官方无关。

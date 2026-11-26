@@ -83,6 +83,16 @@ const PROVIDERS = {
     ],
     defaultModel: 'deepseek-ai/DeepSeek-V3',
   },
+  ark: {
+    name: '火山方舟（Ark）',
+    badge: 'OpenAI 兼容',
+    endpoint: 'https://ark.cn-beijing.volces.com/api/v3',
+    keyUrl: 'https://ark.volcengine.com/region:cn-beijing/apiKey',
+    models: [
+      { id: 'doubao-seed-2-1-pro-260915', vision: true, context: 128000 },
+    ],
+    defaultModel: 'doubao-seed-2-1-pro-260915',
+  },
   ollama: {
     name: 'Ollama（本地）',
     badge: '本地模型',
@@ -107,6 +117,11 @@ const PROVIDERS = {
   },
 };
 
+const EXTRACT_PROVIDERS = Object.keys(PROVIDERS).filter((key) => {
+  const provider = PROVIDERS[key];
+  return provider.custom || provider.models.some((model) => model.vision);
+});
+
 const $ = (id) => document.getElementById(id);
 const providerEl = $('provider');
 const endpointEl = $('endpoint');
@@ -116,7 +131,14 @@ const modelSelectEl = $('modelSelect');
 const modelInputEl = $('modelInput');
 const contextEl = $('contextWindow');
 const visionEl = $('supportsVision');
-const extractModelEl = $('extractModel');
+const extractEnabledEl = $('extractEnabled');
+const extractFieldsEl = $('extractFields');
+const extractProviderEl = $('extractProvider');
+const extractModelSelectEl = $('extractModelSelect');
+const extractModelInputEl = $('extractModelInput');
+const extractEndpointEl = $('extractEndpoint');
+const extractApiKeyEl = $('extractApiKey');
+const extractApiModeEl = $('extractApiMode');
 const testExtractEl = $('testExtract');
 const extractResultEl = $('extractResult');
 const autoDeleteEl = $('autoDeleteDays');
@@ -125,7 +147,6 @@ const providerBadgeEl = $('providerBadge');
 const versionEl = $('version');
 const usageTextEl = $('usageText');
 const usageBarEl = $('usageBar');
-const capabilityHintEl = $('capabilityHint');
 
 let currentSettings = null;
 
@@ -133,10 +154,10 @@ function updateCapabilityControls(isCustom) {
   const custom = !!isCustom;
   visionEl.disabled = !custom;
   contextEl.disabled = !custom;
-  if (!capabilityHintEl) return;
-  capabilityHintEl.textContent = custom
-    ? '自定义模型：请按 API 文档手动填写是否支持图片/多模态及上下文长度。'
-    : '预设模型：多模态能力与上下文长度来自内置 API 配置，无需手动修改。';
+}
+
+function updateExtractVisibility() {
+  if (extractFieldsEl) extractFieldsEl.hidden = !extractEnabledEl.checked;
 }
 
 function setStatus(message, type) {
@@ -239,6 +260,70 @@ function currentModel() {
   return modelInputEl.value.trim();
 }
 
+function fillExtractProviders() {
+  extractProviderEl.textContent = '';
+  EXTRACT_PROVIDERS.forEach((key) => {
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = PROVIDERS[key].name;
+    extractProviderEl.appendChild(option);
+  });
+}
+
+function setExtractModelOptions(providerKey, selectedModel) {
+  const provider = PROVIDERS[providerKey] || PROVIDERS.custom;
+  const models = provider.models.filter((model) => model.vision);
+  extractModelSelectEl.textContent = '';
+  models.forEach((model) => {
+    const option = document.createElement('option');
+    option.value = model.id;
+    option.textContent = model.id + ' · 多模态';
+    extractModelSelectEl.appendChild(option);
+  });
+  if (models.length) {
+    const customOption = document.createElement('option');
+    customOption.value = '__custom__';
+    customOption.textContent = '自定义模型…';
+    extractModelSelectEl.appendChild(customOption);
+  }
+  const target = selectedModel || (models[0] ? models[0].id : '');
+  if (models.some((model) => model.id === target)) {
+    extractModelSelectEl.value = target;
+    extractModelSelectEl.hidden = false;
+    extractModelInputEl.hidden = true;
+  } else {
+    extractModelSelectEl.value = models.length ? '__custom__' : '';
+    extractModelSelectEl.hidden = !models.length;
+    extractModelInputEl.hidden = false;
+    extractModelInputEl.value = target;
+  }
+}
+
+function applyExtractProvider(providerKey, settings, fromLoad) {
+  const key = EXTRACT_PROVIDERS.includes(providerKey)
+    ? providerKey
+    : (EXTRACT_PROVIDERS.includes('openai') ? 'openai' : 'custom');
+  const provider = PROVIDERS[key] || PROVIDERS.custom;
+  extractProviderEl.value = key;
+  const savedEndpoint = settings && settings.extractEndpoint;
+  if (provider.custom) {
+    extractEndpointEl.value = fromLoad && savedEndpoint ? savedEndpoint : '';
+  } else {
+    extractEndpointEl.value = fromLoad && savedEndpoint ? savedEndpoint : provider.endpoint;
+  }
+  const savedModel = fromLoad && settings ? settings.extractModel : '';
+  setExtractModelOptions(key, savedModel);
+}
+
+function currentExtractModel() {
+  if (!extractModelSelectEl.hidden
+    && extractModelSelectEl.value
+    && extractModelSelectEl.value !== '__custom__') {
+    return extractModelSelectEl.value;
+  }
+  return extractModelInputEl.value.trim();
+}
+
 function collectSettings() {
   return {
     provider: providerEl.value,
@@ -247,7 +332,12 @@ function collectSettings() {
     apiKey: apiKeyEl.value.trim(),
     supportsVision: !!visionEl.checked,
     contextWindow: Math.max(1024, parseInt(contextEl.value, 10) || 128000),
-    extractModel: extractModelEl.value.trim(),
+    extractEnabled: !!extractEnabledEl.checked,
+    extractProvider: extractProviderEl.value,
+    extractEndpoint: extractEndpointEl.value.trim(),
+    extractApiKey: extractApiKeyEl.value.trim(),
+    extractModel: currentExtractModel(),
+    extractApiMode: extractApiModeEl.value,
     autoDeleteDays: parseInt(autoDeleteEl.value, 10) || 0,
   };
 }
@@ -265,10 +355,32 @@ function validateSettings(settings) {
   return url;
 }
 
-function requestHostPermission(url) {
-  const origin = url.origin + '/*';
+function validateExtractSettings(settings) {
+  if (!settings.extractEnabled) return null;
+  if (!settings.extractEndpoint) throw new Error('请填写文件识别模型 Endpoint。');
+  let url;
+  try {
+    url = new URL(settings.extractEndpoint);
+  } catch (err) {
+    throw new Error('文件识别模型 Endpoint 不是有效的 URL。');
+  }
+  if (!/^https?:$/.test(url.protocol)) throw new Error('文件识别模型 Endpoint 必须是 http(s) 地址。');
+  if (!settings.extractModel) throw new Error('请选择或填写文件识别模型。');
+  return url;
+}
+
+function isLocalUrl(url) {
+  const host = String(url.hostname || '').toLowerCase();
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+}
+
+function requestHostPermissions(urls) {
+  const origins = Array.from(new Set((urls || [])
+    .filter(Boolean)
+    .map((url) => url.origin + '/*')));
+  if (!origins.length) return Promise.resolve(true);
   return new Promise((resolve) => {
-    chrome.permissions.request({ origins: [origin] }, (granted) => resolve(!!granted));
+    chrome.permissions.request({ origins }, (granted) => resolve(!!granted));
   });
 }
 
@@ -322,23 +434,56 @@ function cleanupChats(days) {
 
 function load() {
   fillProviders();
+  fillExtractProviders();
   chrome.storage.local.get([SETTINGS_KEY], (result) => {
     const settings = result[SETTINGS_KEY] || {};
     currentSettings = settings;
-    extractModelEl.value = settings.extractModel || '';
     autoDeleteEl.value = String(settings.autoDeleteDays || 0);
     apiKeyEl.value = settings.apiKey || '';
     visionEl.checked = settings.supportsVision !== false;
     contextEl.value = String(settings.contextWindow || 128000);
     const providerKey = PROVIDERS[settings.provider] ? settings.provider : 'custom';
     applyProvider(providerKey, settings);
+    extractEnabledEl.checked = settings.extractEnabled === true;
+    extractApiKeyEl.value = settings.extractApiKey || '';
+    extractApiModeEl.value = settings.extractApiMode || 'auto';
+    const defaultExtractProvider = EXTRACT_PROVIDERS.includes(providerKey) ? providerKey : 'openai';
+    const extractProvider = EXTRACT_PROVIDERS.includes(settings.extractProvider)
+      ? settings.extractProvider
+      : defaultExtractProvider;
+    applyExtractProvider(extractProvider, settings, true);
+    updateExtractVisibility();
     updateUsage();
     versionEl.textContent = 'v' + chrome.runtime.getManifest().version;
   });
 }
 
 providerEl.addEventListener('change', () => {
-  applyProvider(providerEl.value, {});  setStatus('');
+  applyProvider(providerEl.value, {});
+  setStatus('');
+});
+
+extractEnabledEl.addEventListener('change', updateExtractVisibility);
+
+extractProviderEl.addEventListener('change', () => {
+  applyExtractProvider(extractProviderEl.value, {}, false);
+  extractResultEl.textContent = '';
+});
+
+extractModelSelectEl.addEventListener('change', () => {
+  if (extractModelSelectEl.value === '__custom__') {
+    extractModelInputEl.hidden = false;
+    extractModelInputEl.value = '';
+    extractModelInputEl.focus();
+  } else {
+    extractModelInputEl.hidden = true;
+  }
+});
+
+$('toggleExtractKey').addEventListener('click', () => {
+  const visible = extractApiKeyEl.type === 'text';
+  extractApiKeyEl.type = visible ? 'password' : 'text';
+  $('toggleExtractKey').textContent = visible ? '显示' : '隐藏';
 });
 
 modelSelectEl.addEventListener('change', () => {
@@ -369,7 +514,7 @@ $('test').addEventListener('click', () => {
     setStatus(error.message, 'error');
     return;
   }
-  requestHostPermission(url).then((granted) => {
+  requestHostPermissions([url]).then((granted) => {
     if (!granted) {
       setStatus('未授权该 API 域名，无法测试连接。', 'error');
       return;
@@ -393,18 +538,19 @@ testExtractEl.addEventListener('click', () => {
   let url;
   try {
     settings = collectSettings();
-    url = validateSettings(settings);
+    if (!settings.extractEnabled) throw new Error('请先开启文件识别模型。');
+    url = validateExtractSettings(settings);
   } catch (error) {
     extractResultEl.className = 'hint error';
     extractResultEl.textContent = error.message;
     return;
   }
-  if (!settings.extractModel) {
+  if (!settings.extractApiKey && !isLocalUrl(url)) {
     extractResultEl.className = 'hint error';
-    extractResultEl.textContent = '请先填写文件识别模型，再进行检测。';
+    extractResultEl.textContent = '请填写文件识别模型的 API Key。';
     return;
   }
-  requestHostPermission(url).then((granted) => {
+  requestHostPermissions([url]).then((granted) => {
     if (!granted) {
       extractResultEl.className = 'hint error';
       extractResultEl.textContent = '未授权该 API 域名，无法检测。';
@@ -425,11 +571,12 @@ testExtractEl.addEventListener('click', () => {
         extractResultEl.textContent = response && response.error || '检测失败';
         return;
       }
+      const modeLabel = response.mode === 'responses' ? 'Responses API' : 'Chat Completions';
       const docLabel = response.document
         ? '支持'
-        : (/未提供标准文档解析/.test(String(response.documentDetail || '')) ? '需 DeepSeek' : '不支持');
+        : (response.documentTested === false ? '未检测' : '不支持');
       extractResultEl.className = 'hint sub ' + (response.vision || response.document ? 'ok' : 'error');
-      extractResultEl.textContent = `${response.model}：图片 ${response.vision ? '支持' : '不支持'} / 文档 ${docLabel}`;
+      extractResultEl.textContent = `${response.model}（${modeLabel}）：图片 ${response.vision ? '支持' : '不支持'} / 文档 ${docLabel}`;
       extractResultEl.title = [
         response.visionDetail ? `图片检测：${response.visionDetail}` : '',
         response.documentDetail ? `文档检测：${response.documentDetail}` : '',
@@ -441,14 +588,16 @@ testExtractEl.addEventListener('click', () => {
 $('save').addEventListener('click', () => {
   let settings;
   let url;
+  let extractUrl = null;
   try {
     settings = collectSettings();
     url = validateSettings(settings);
+    extractUrl = validateExtractSettings(settings);
   } catch (error) {
     setStatus(error.message, 'error');
     return;
   }
-  requestHostPermission(url).then((granted) => {
+  requestHostPermissions([url, extractUrl]).then((granted) => {
     if (!granted) {
       setStatus('未授权该 API 域名，设置未保存。请允许域名权限后重试。', 'error');
       return;

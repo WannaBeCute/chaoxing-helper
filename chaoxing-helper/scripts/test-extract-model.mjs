@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 /**
- * 检测“文件识别模型”是否可处理图片/文档（无需安装依赖，Node 18+）。
+ * 检测“文件识别模型”是否可处理图片/文档（Node 18+，无需安装 npm 包）。
  *
  * 用法：
- *   node scripts/test-extract-model.mjs --endpoint https://api.deepseek.com/v1 --key sk-xxx --model deepseek-flash
+ *   node scripts/test-extract-model.mjs --endpoint https://api.openai.com/v1 --key sk-xxx --model gpt-4o-mini
+ *   node scripts/test-extract-model.mjs --endpoint https://api.deepseek.com/v1 --key sk-xxx --model deepseek-flash --mode chat
+ *   node scripts/test-extract-model.mjs --endpoint https://ark.cn-beijing.volces.com/api/v3 --key xxx --model doubao-seed-2-1-pro-260915 --mode responses
  *   node scripts/test-extract-model.mjs --endpoint ... --key ... --model ... --file ./sample.pdf
  *
  * 说明：
- * - 会向模型发送一张 64x64 纯色图片，产生少量图片输入 token。
- * - DeepSeek Endpoint 还会上传一个临时 txt 文件并引用它，验证文档解析能力（user_data 上传不计费）。
- * - 传入 --file 时会上传该文件并按页解析，可能产生解析费用；请确认后再使用。
+ * - Chat Completions 使用 image_url；Responses API 使用 input_image / input_text。
+ * - DeepSeek Endpoint 会上传临时 txt（user_data，不计费）验证文档能力。
+ * - 其他 Responses API Endpoint 会用 input_file 内联一个小文本文件测试。
+ * - Chat Completions 的非 DeepSeek 接口没有标准文档上传方式，会跳过文档检测。
+ * - 传入 --file 时会上传该文件并按页解析，可能产生解析费用。
  */
 import { readFile } from 'node:fs/promises';
 
@@ -21,9 +25,10 @@ function arg(name, fallback) {
   return fallback;
 }
 
-const endpoint = arg('endpoint', process.env.CXH_ENDPOINT || 'https://api.deepseek.com/v1');
+const endpoint = arg('endpoint', process.env.CXH_ENDPOINT || 'https://api.openai.com/v1');
 const apiKey = arg('key', process.env.CXH_API_KEY || '');
 const model = arg('model', process.env.CXH_EXTRACT_MODEL || '');
+const modeArg = arg('mode', process.env.CXH_API_MODE || 'auto');
 const filePath = arg('file', '');
 
 if (!apiKey) {
@@ -35,38 +40,58 @@ if (!model) {
   process.exit(2);
 }
 
-function chatUrl() {
+function resolveTarget() {
   const url = new URL(endpoint);
   let path = url.pathname.replace(/\/+$/, '');
-  if (!/\/chat\/completions$/.test(path)) path += '/chat/completions';
-  url.pathname = path;
-  return url.toString();
+  const requested = modeArg === 'chat' || modeArg === 'responses' ? modeArg : '';
+  let detected = '';
+  if (/\/responses$/i.test(path)) detected = 'responses';
+  else if (/\/chat\/completions$/i.test(path)) detected = 'chat';
+  const mode = requested || detected || 'chat';
+  path = path.replace(/\/chat\/completions$/i, '').replace(/\/responses$/i, '');
+  path += mode === 'responses' ? '/responses' : '/chat/completions';
+  url.pathname = path || (mode === 'responses' ? '/responses' : '/chat/completions');
+  return { url: url.toString(), mode };
 }
+
+const target = resolveTarget();
 
 function isDeepSeek() {
   return /api\.deepseek\.com/i.test(endpoint);
 }
 
-async function chat(content) {
-  const response = await fetch(chatUrl(), {
+function replyText(data) {
+  if (!data) return '';
+  if (typeof data.output_text === 'string') return data.output_text.trim();
+  const parts = [];
+  if (Array.isArray(data.output)) {
+    data.output.forEach((item) => {
+      if (!item || !Array.isArray(item.content)) return;
+      item.content.forEach((part) => {
+        if (!part) return;
+        if (typeof part.text === 'string') parts.push(part.text);
+        else if (typeof part.output_text === 'string') parts.push(part.output_text);
+      });
+    });
+  }
+  if (parts.length) return parts.join('').trim();
+  const content = data.choices && data.choices[0] && data.choices[0].message
+    && data.choices[0].message.content;
+  return typeof content === 'string' ? content.trim() : '';
+}
+
+async function request(body) {
+  const response = await fetch(target.url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'user', content }],
-      stream: false,
-      temperature: 0,
-    }),
+    body: JSON.stringify(body),
   });
-  const body = await response.text();
-  if (!response.ok) throw new Error(`HTTP ${response.status}：${body.slice(0, 300)}`);
-  const data = JSON.parse(body);
-  const reply = data && data.choices && data.choices[0] && data.choices[0].message
-    && data.choices[0].message.content;
-  return typeof reply === 'string' ? reply.trim() : '';
+  const raw = await response.text();
+  if (!response.ok) throw new Error(`HTTP ${response.status}：${raw.slice(0, 300)}`);
+  return replyText(JSON.parse(raw));
 }
 
 async function upload(blob, filename, purpose) {
@@ -79,20 +104,34 @@ async function upload(blob, filename, purpose) {
     headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
   });
-  const body = await response.text();
-  if (!response.ok) throw new Error(`HTTP ${response.status}：${body.slice(0, 300)}`);
-  const data = JSON.parse(body);
+  const raw = await response.text();
+  if (!response.ok) throw new Error(`HTTP ${response.status}：${raw.slice(0, 300)}`);
+  const data = JSON.parse(raw);
   if (!data || !data.id) throw new Error('文件上传未返回 file_id');
   return data.id;
+}
+
+function imageContent(type) {
+  if (target.mode === 'responses') {
+    return [
+      { type: 'input_text', text: '这张纯色图片的主色是什么？只回复颜色名称。' },
+      { type: 'input_image', image_url: TEST_IMAGE },
+    ];
+  }
+  return [
+    { type: 'text', text: '这张纯色图片的主色是什么？只回复颜色名称。' },
+    { type: 'image_url', image_url: { url: TEST_IMAGE } },
+  ];
 }
 
 async function testImage() {
   process.stdout.write('图片检测… ');
   try {
-    const reply = await chat([
-      { type: 'text', text: '这张纯色图片的主色是什么？只回复颜色名称。' },
-      { type: 'image_url', image_url: { url: TEST_IMAGE } },
-    ]);
+    const content = imageContent();
+    const body = target.mode === 'responses'
+      ? { model, input: [{ role: 'user', content }] }
+      : { model, messages: [{ role: 'user', content }], stream: false, temperature: 0 };
+    const reply = await request(body);
     console.log(`支持（模型回复：${reply.slice(0, 60) || '空'}）`);
     return true;
   } catch (error) {
@@ -102,8 +141,9 @@ async function testImage() {
 }
 
 async function testDocument() {
-  if (!isDeepSeek()) {
-    console.log('文档检测… 跳过（当前 Endpoint 不是 DeepSeek，未提供标准文档解析）');
+  const deepSeek = isDeepSeek();
+  if (!deepSeek && target.mode !== 'responses') {
+    console.log('文档检测… 跳过（Chat Completions 没有标准文档上传方式）');
     return null;
   }
   process.stdout.write('文档检测… ');
@@ -130,11 +170,50 @@ async function testDocument() {
       purpose = 'user_data';
       prompt = '文档中的数字是多少？只回复数字。';
     }
-    const fileId = await upload(blob, filename, purpose);
-    const reply = await chat([
-      { type: 'file', file_id: fileId },
-      { type: 'text', text: prompt },
-    ]);
+
+    let body;
+    if (deepSeek) {
+      const fileId = await upload(blob, filename, purpose);
+      if (target.mode === 'responses') {
+        body = {
+          model,
+          input: [{
+            role: 'user',
+            content: [
+              { type: 'input_file', file_id: fileId },
+              { type: 'input_text', text: prompt },
+            ],
+          }],
+        };
+      } else {
+        body = {
+          model,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'file', file_id: fileId },
+              { type: 'text', text: prompt },
+            ],
+          }],
+          stream: false,
+          temperature: 0,
+        };
+      }
+    } else {
+      const buffer = Buffer.from(await blob.arrayBuffer());
+      const dataUrl = `data:${blob.type};base64,${buffer.toString('base64')}`;
+      body = {
+        model,
+        input: [{
+          role: 'user',
+          content: [
+            { type: 'input_file', filename, file_data: dataUrl },
+            { type: 'input_text', text: prompt },
+          ],
+        }],
+      };
+    }
+    const reply = await request(body);
     console.log(`支持（模型回复：${reply.slice(0, 80) || '空'}）`);
     return true;
   } catch (error) {
@@ -144,7 +223,8 @@ async function testDocument() {
 }
 
 console.log(`模型：${model}`);
-console.log(`Endpoint：${endpoint}`);
+console.log(`Endpoint：${target.url}`);
+console.log(`接口类型：${target.mode === 'responses' ? 'Responses API' : 'Chat Completions'}`);
 console.log('注意：检测会发起少量 API 调用，可能产生费用。');
 const vision = await testImage();
 const document = await testDocument();

@@ -357,7 +357,7 @@
         updateAttachState();
         app.bridgeRequest('prefs:set', { patch: { vision: state.vision } }, 5000).catch(() => {});
         if (!state.vision) {
-          const extract = extractModelName();
+          const extract = extractModelReady() ? extractModelName() : '';
           if (extract) setStatus(`已关闭模型识图；上传的图片/文档将由 ${extract} 提取内容。`);
           else if (deepseekOcrAvailable()) setStatus('已关闭模型识图；图片/PDF/Word 将使用 DeepSeek OCR。');
           else setStatus('已关闭模型识图；未配置文件识别模型，图片上传已禁用。');
@@ -1014,12 +1014,48 @@
       || /api\.deepseek\.com/i.test(String(settings.endpoint || ''));
   }
 
-  function extractModelName() {
-    return String((state.settings && state.settings.extractModel) || '').trim();
+  function extractIsLocal(endpoint) {
+    try {
+      const host = new URL(String(endpoint || '')).hostname.toLowerCase();
+      return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+    } catch (error) {
+      return false;
+    }
   }
 
-  function isDeepSeekEndpoint() {
-    return !!state.settings && /api\.deepseek\.com/i.test(String(state.settings.endpoint || ''));
+  function extractConfig() {
+    const settings = state.settings;
+    if (!settings || !settings.extractEnabled) return null;
+    const endpoint = String(settings.extractEndpoint || '').trim();
+    const model = String(settings.extractModel || '').trim();
+    if (!endpoint || !model) return null;
+    return {
+      endpoint,
+      model,
+      hasKey: !!settings.hasExtractApiKey,
+      local: extractIsLocal(endpoint),
+      mode: settings.extractApiMode || 'auto',
+    };
+  }
+
+  function extractModelName() {
+    const config = extractConfig();
+    return config ? config.model : '';
+  }
+
+  function extractModelReady() {
+    const config = extractConfig();
+    return !!config && (config.hasKey || config.local);
+  }
+
+  function effectiveExtractMode(config) {
+    if (!config) return 'chat';
+    if (config.mode === 'chat' || config.mode === 'responses') return config.mode;
+    try {
+      return /\/responses\/?$/i.test(new URL(config.endpoint).pathname) ? 'responses' : 'chat';
+    } catch (error) {
+      return 'chat';
+    }
   }
 
   function modelApiReady() {
@@ -1027,38 +1063,51 @@
     return !!settings && (!!settings.hasApiKey || settings.provider === 'ollama');
   }
 
+  function fileModelDocumentCapable() {
+    const config = extractConfig();
+    if (!config || !extractModelReady()) return false;
+    return /api\.deepseek\.com/i.test(config.endpoint) || effectiveExtractMode(config) === 'responses';
+  }
+
   function imageExtractAvailable() {
     const settings = state.settings;
-    return !!settings && modelApiReady()
-      && (!!extractModelName() || !!settings.supportsVision);
+    if (!settings) return false;
+    if (extractModelReady()) return true;
+    return modelApiReady() && !!settings.supportsVision;
   }
 
   function documentExtractAvailable() {
-    if (!state.settings || !modelApiReady()) return false;
-    if (extractModelName() && isDeepSeekEndpoint()) return true;
+    if (fileModelDocumentCapable()) return true;
     return deepseekOcrAvailable();
   }
 
   function questionImageModel() {
+    const config = extractConfig();
+    if (config && extractModelReady()) return config.model;
     const settings = state.settings;
-    if (!settings || !modelApiReady()) return '';
-    return extractModelName() || (settings.supportsVision ? String(settings.model || '').trim() : '');
+    if (settings && modelApiReady() && settings.supportsVision) {
+      return String(settings.model || '').trim();
+    }
+    return '';
   }
 
   function updateAttachState() {
     const attach = app.shadow.querySelector('[data-ai="attach"]');
     if (!attach) return;
     const vision = !!state.vision;
-    const extract = extractModelName();
+    const config = extractConfig();
+    const extractReady = extractModelReady();
     const ocr = deepseekOcrAvailable();
-    const enabled = vision || imageExtractAvailable() || ocr;
+    const enabled = vision || extractReady || ocr;
     attach.disabled = !enabled;
     if (!enabled) {
-      attach.title = '未开启多模态，且未配置文件识别模型，暂不支持文件上传';
+      attach.title = config
+        ? '文件识别模型已开启，但 Endpoint / API Key 未填写完整'
+        : '未开启多模态，且未配置文件识别模型，暂不支持文件上传';
       return;
     }
-    if (extract) {
-      attach.title = `上传图片/PDF/Word：使用 ${extract} 提取内容（会消耗 API）；附件只用于当前页面`;
+    if (extractReady) {
+      attach.title = `上传图片/PDF/Word：优先使用 ${config.model} 提取内容（会消耗 API）；附件只用于当前页面`;
       return;
     }
     attach.title = ocr
@@ -1081,7 +1130,6 @@
 
   function addFiles(files) {
     if (!files.length) return;
-    const extract = extractModelName();
     const ocr = deepseekOcrAvailable();
     if (!state.vision && !imageExtractAvailable() && !ocr) {
       setStatus('未开启多模态，且未配置文件识别模型，暂不支持文件上传。', true);
@@ -1154,7 +1202,7 @@
       }
       if (/\.(pdf|docx?|pptx?)$/.test(lower)) {
         if (!documentExtractAvailable()) {
-          setStatus('PDF/Word/PPT 需要 DeepSeek 文件识别模型或 DeepSeek OCR，当前不可用。', true);
+          setStatus('PDF/Word/PPT 需要支持文档的文件识别接口；当前配置不可用。', true);
           return;
         }
         if (file.size > 100 * 1024 * 1024) {
@@ -1505,7 +1553,7 @@
       appendBlock(`【附件：${item.name}】\n${item.text}`);
     });
 
-    const extract = extractModelName();
+    const extract = extractModelReady() ? extractModelName() : '';
     let nativeImages = [];
     if (imageAttachments.length) {
       if (extract) {
@@ -1558,7 +1606,7 @@
             setStatus(`读取附件失败：${doc.name}`, true);
             return;
           }
-          const useExtractModel = !!extract && isDeepSeekEndpoint();
+          const useExtractModel = fileModelDocumentCapable();
           if (useExtractModel) {
             setStatus(`正在调用 ${extract} 识别文档「${doc.name}」…`);
             let result;

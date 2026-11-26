@@ -28,7 +28,12 @@
     apiKey: '',
     supportsVision: true,
     contextWindow: 128000,
-    extractModel: '',
+    extractEnabled: false,
+    extractProvider: 'openai',
+    extractEndpoint: 'https://api.openai.com/v1',
+    extractModel: 'gpt-4o-mini',
+    extractApiKey: '',
+    extractApiMode: 'auto',
     autoDeleteDays: 0,
   };
 
@@ -173,9 +178,10 @@
 
   function sanitizeSettings(settings) {
     const copy = { ...settings };
-    const hasApiKey = !!copy.apiKey;
+    copy.hasApiKey = !!copy.apiKey;
+    copy.hasExtractApiKey = !!copy.extractApiKey;
     delete copy.apiKey;
-    copy.hasApiKey = hasApiKey;
+    delete copy.extractApiKey;
     return copy;
   }
 

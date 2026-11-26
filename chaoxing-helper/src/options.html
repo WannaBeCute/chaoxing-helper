@@ -10,7 +10,7 @@
   <div class="wrap">
     <header class="top">
       <div class="brand">
-        <div class="logo">超</div>
+        <div class="logo"><img src="../icons/icon128.png" alt="超星辅助助手"></div>
         <div>
           <h1>超星辅助助手</h1>
           <p>扩展设置 · Chrome / Edge</p>
@@ -55,22 +55,59 @@
           <span>该模型支持图片 / 多模态输入</span>
         </label>
       </div>
-      <p class="hint" id="capabilityHint">预设模型的多模态能力与上下文长度来自内置 API 配置，无需手动填写；选择“自定义模型”时才可修改。</p>
-      <label class="field span-2">
-        <span>文件识别模型（可选）</span>
-        <input id="extractModel" type="text" placeholder="例如 deepseek-flash / qwen-vl-max" autocomplete="off">
-      </label>
-      <div class="extract-row span-2">
-        <button type="button" class="btn small" id="testExtract">检测图片/文档能力</button>
-        <span class="hint" id="extractResult"></span>
+      <div class="switch-row">
+        <div>
+          <strong>文件识别模型</strong>
+          <p>使用独立的多模态模型提取上传文件内容，不参与对话。</p>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="extractEnabled">
+          <span class="switch-track"></span>
+        </label>
       </div>
-      <p class="hint">文件识别模型不参与对话，只用于提取上传文件/题目图片内容。填写后，图片会优先调用该模型；若当前 Endpoint 是 DeepSeek，PDF/Word 也会优先用该模型解析。留空时图片使用主模型（若支持多模态），文档使用 DeepSeek OCR。检测和调用使用当前 Endpoint 与 API Key。</p>
+      <div class="extract-settings" id="extractFields" hidden>
+        <div class="grid">
+          <label class="field">
+            <span>厂商</span>
+            <select id="extractProvider"></select>
+          </label>
+          <label class="field">
+            <span>模型（仅多模态）</span>
+            <select id="extractModelSelect"></select>
+            <input id="extractModelInput" type="text" placeholder="自定义多模态模型名" hidden autocomplete="off">
+          </label>
+          <label class="field span-2">
+            <span>Endpoint（Base URL，或 .../responses）</span>
+            <input id="extractEndpoint" type="url" placeholder="https://api.openai.com/v1" autocomplete="off">
+          </label>
+          <label class="field">
+            <span>API Key</span>
+            <div class="key-row">
+              <input id="extractApiKey" type="password" placeholder="sk-..." autocomplete="off">
+              <button type="button" class="btn small" id="toggleExtractKey">显示</button>
+            </div>
+          </label>
+          <label class="field">
+            <span>接口类型</span>
+            <select id="extractApiMode">
+              <option value="auto">自动识别</option>
+              <option value="chat">Chat Completions</option>
+              <option value="responses">Responses API</option>
+            </select>
+          </label>
+          <div class="extract-row span-2">
+            <button type="button" class="btn small" id="testExtract">检测图片/文档能力</button>
+            <span class="hint sub" id="extractResult"></span>
+          </div>
+        </div>
+        <p class="hint">上传的图片/其他文档会优先调用此模型，使用前最好先检测能力</p>
+      </div>
       <div class="actions">
         <button type="button" class="btn" id="test">测试连接</button>
         <button type="button" class="btn primary" id="save">保存设置</button>
         <span class="status" id="status"></span>
       </div>
-      <p class="hint">自定义 Endpoint 首次保存或测试时，浏览器会请求该域名的访问权限。API Key 仅保存在本机扩展存储中，不加密，也不会发送给网页。</p>
+
     </section>
 
     <section class="card">
