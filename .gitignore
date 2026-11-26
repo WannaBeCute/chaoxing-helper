@@ -1,0 +1,16 @@
+# 私钥与构建产物
+*.pem
+*.crx
+
+# 依赖包/压缩包
+*.zip
+
+# 临时与缓存
+node_modules/
+__pycache__/
+*.log
+.DS_Store
+Thumbs.db
+
+# GitHub 独立发布仓库（避免嵌套仓库）
+github-ready/

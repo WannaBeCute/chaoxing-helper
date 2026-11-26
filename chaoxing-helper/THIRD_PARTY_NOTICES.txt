@@ -1,0 +1,47 @@
+超星辅助助手 (Chaoxing Helper)
+Copyright (C) 2026
+
+This extension is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This extension is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+------------------------------------------------------------------------
+Third-party notices
+
+1. Font decoding algorithm and font mapping table
+   Source: Samueli924/chaoxing
+   URL:    https://github.com/Samueli924/chaoxing
+   License: GNU GPL v3.0
+   Files:  src/font-map.json
+           src/font-decode.js (implementation based on the same algorithm)
+
+2. MD5 implementation
+   Written for this project based on RFC 1321 (public algorithm).
+
+3. marked
+   URL:    https://github.com/markedjs/marked
+   License: MIT
+   Files:  vendor/marked.min.js
+
+4. DOMPurify
+   URL:    https://github.com/cure53/DOMPurify
+   License: Apache-2.0 OR MPL-2.0
+   Files:  vendor/purify.min.js
+
+5. highlight.js
+   URL:    https://github.com/highlightjs/highlight.js
+   License: BSD-3-Clause
+   Files:  vendor/highlight.min.js
+
+OCR / document parsing dependencies are not bundled in the main CRX.
+When the optional local-recognition package is installed, its licenses will be
+listed in that package and in the settings dependency panel.

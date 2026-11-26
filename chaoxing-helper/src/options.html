@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>超星辅助助手 · 设置</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">
+        <div class="logo">超</div>
+        <div>
+          <h1>超星辅助助手</h1>
+          <p>扩展设置 · Chrome / Edge</p>
+        </div>
+      </div>
+      <span class="version" id="version"></span>
+    </header>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>AI 接口</h2>
+        <span class="badge" id="providerBadge">OpenAI 兼容</span>
+      </div>
+      <div class="grid">
+        <label class="field">
+          <span>AI 厂商</span>
+          <select id="provider"></select>
+        </label>
+        <label class="field">
+          <span>Endpoint（Base URL）</span>
+          <input id="endpoint" type="url" placeholder="https://api.openai.com/v1" autocomplete="off">
+        </label>
+        <label class="field span-2">
+          <span>API Key</span>
+          <div class="key-row">
+            <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off">
+            <button type="button" class="btn small" id="toggleKey">显示</button>
+            <a class="link" id="getKey" href="#" target="_blank" rel="noreferrer">获取 API</a>
+          </div>
+        </label>
+        <label class="field">
+          <span>模型</span>
+          <select id="modelSelect"></select>
+          <input id="modelInput" type="text" placeholder="自定义模型名" hidden autocomplete="off">
+        </label>
+        <label class="field">
+          <span>上下文长度（tokens）</span>
+          <input id="contextWindow" type="number" min="1024" step="1024" value="128000">
+        </label>
+        <label class="check span-2">
+          <input type="checkbox" id="supportsVision">
+          <span>该模型支持图片 / 多模态输入</span>
+        </label>
+      </div>
+      <p class="hint" id="capabilityHint">预设模型的多模态能力与上下文长度来自内置 API 配置，无需手动填写；选择“自定义模型”时才可修改。</p>
+      <div class="actions">
+        <button type="button" class="btn" id="test">测试连接</button>
+        <button type="button" class="btn primary" id="save">保存设置</button>
+        <span class="status" id="status"></span>
+      </div>
+      <p class="hint">自定义 Endpoint 首次保存或测试时，浏览器会请求该域名的访问权限。API Key 仅保存在本机扩展存储中，不加密，也不会发送给网页。</p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>题目提取</h2>
+      </div>
+      <label class="switch-row">
+        <div>
+          <strong>自动识别题目中的图片（阶段 2 接入）</strong>
+          <p>默认开启。阶段 2 会安装本地 OCR 引擎；当前版本先保存该偏好，不会自动识别图片。</p>
+        </div>
+        <input type="checkbox" id="ocrImages">
+      </label>
+      <p class="hint">如果当前模型支持多模态，可以在 AI 对话输入框或题目提取窗口临时切换为模型识别。</p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>对话缓存</h2>
+      </div>
+      <div class="row">
+        <label class="field compact">
+          <span>自动清除旧对话</span>
+          <select id="autoDeleteDays">
+            <option value="0">不自动清除（默认）</option>
+            <option value="7">超过 7 天</option>
+            <option value="14">超过 14 天</option>
+            <option value="30">超过 30 天</option>
+          </select>
+        </label>
+      </div>
+      <div class="usage">
+        <div class="usage-text">
+          <span id="usageText">统计中…</span>
+          <div class="bar"><span id="usageBar"></span></div>
+        </div>
+        <button type="button" class="btn danger" id="clearChats">清理全部对话</button>
+      </div>
+      <p class="hint">对话上限约 8MB / 30 个。超过后会在 AI 页面提示清理最旧对话，不会自动删除。</p>
+    </section>
+
+    <section class="card about">
+      <h2>说明</h2>
+      <p>AI 对话会把题目文本、你发送的文档文本和对话内容发送给所配置的 API 服务商。请确认你接受对应服务商的隐私政策。</p>
+      <p>超星页面上的填入、图片/附件上传仍由扩展调用页面自身接口完成；AI 回复不会自动写入作业，需要你在对话里点击“填入当前光标”。</p>
+      <p>本扩展以 GPL-3.0 开源；超星字体解码算法与映射表来自 <a class="link" href="https://github.com/Samueli924/chaoxing" target="_blank" rel="noreferrer">Samueli924/chaoxing</a>（GPL-3.0）。</p>
+    </section>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>
