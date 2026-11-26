@@ -78,7 +78,7 @@
 - 预设模型的多模态能力与上下文长度由内置配置自动填写并只读；自定义模型可手动填写。
 - 已包含 `deepseek-flash`、`gpt-4.1`、`kimi-k2`、`glm-4.5`、`qwen2.5vl` 等模型。
 - `deepseek-flash` 按官方文档标记为支持图像理解/多模态。
-- **文件识别模型（可选）**：填写一个模型名后，上传的图片/PDF/Word/PPT 和题目图片会优先调用它提取内容；它不参与对话。留空时图片使用主模型（若支持多模态），文档使用 DeepSeek OCR。
+- **文件识别模型（可选）**：填写一个模型名后，上传的图片和题目图片会优先调用它提取内容；它不参与对话。若当前 Endpoint 是 DeepSeek，PDF/Word/PPT 也会优先用该模型解析。留空时图片使用主模型（若支持多模态），文档使用 DeepSeek OCR。
 - 设置页提供“检测图片/文档能力”按钮，会实际发起少量调用，判断该模型是否支持图片输入和文档解析；也可用仓库中的 `chaoxing-helper/scripts/test-extract-model.mjs` 在命令行检测。
 - 文件识别模型为 DeepSeek 时，文档通过官方 Files API 解析：
   - 上传：`POST https://api.deepseek.com/files`（`purpose=text_recognition`，纯文本用 `user_data`）

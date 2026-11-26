@@ -64,7 +64,7 @@
         <button type="button" class="btn small" id="testExtract">检测图片/文档能力</button>
         <span class="hint" id="extractResult"></span>
       </div>
-      <p class="hint">文件识别模型不参与对话，只用于提取上传文件/题目图片内容。填写后，上传的图片/文档会优先调用该模型；留空时图片使用主模型（若支持多模态），文档使用 DeepSeek OCR。检测和调用使用当前 Endpoint 与 API Key；PDF/Word 文档解析目前要求 DeepSeek Endpoint（如 deepseek-flash）。</p>
+      <p class="hint">文件识别模型不参与对话，只用于提取上传文件/题目图片内容。填写后，图片会优先调用该模型；若当前 Endpoint 是 DeepSeek，PDF/Word 也会优先用该模型解析。留空时图片使用主模型（若支持多模态），文档使用 DeepSeek OCR。检测和调用使用当前 Endpoint 与 API Key。</p>
       <div class="actions">
         <button type="button" class="btn" id="test">测试连接</button>
         <button type="button" class="btn primary" id="save">保存设置</button>
