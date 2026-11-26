@@ -12,11 +12,11 @@
 
 大多数浏览器不能直接导入crx，比如Edge / Chrome，需以「加载解压缩的扩展」方式安装。
 
-1. **下载源码**：点击 [Source code (zip)](https://github.com/WannaBeCute/chaoxing-helper/archive/refs/tags/v1.4.0.zip) 下载压缩包。（下载crx会麻烦一点）
+1. **下载源码**：点击 [Source code (zip)](https://github.com/WannaBeCute/chaoxing-helper/archive/refs/tags/v1.4.0.zip) 下载压缩包。（下载crx会麻烦一点，如果下载的是crx，需要把后缀改成zip然后进行后面步骤）
 2. **解压**：解压到任意文件夹，记住路径。
 3. **打开扩展管理页**：可从地址栏输入 `chrome://extensions`（Chrome）或 `edge://extensions`（Edge）跳转，也可从浏览器菜单进入「管理扩展」。
 4. **开启开发者模式**：打开页面右上角（Edge 为左下角）的「开发者模式」开关。
-5. **加载扩展**：点击「加载解压缩的扩展」，选中**你解压的那个文件夹**，即可安装完成。如果报错，刷新浏览器重复步骤就行
+5. **加载扩展**：点击「加载解压缩的扩展」，选中解压后文件夹里面的**chaoxing-helper**文件夹，即可安装完成。如果报错，刷新浏览器重复步骤就行
 
 > ⚠️ 加载的是解压后的文件夹而非压缩包；请保留该文件夹，删除后扩展会失效。
 
