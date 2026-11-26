@@ -1,3 +1,5 @@
+> AI大人顺手帮我先写好了README.md还有Release，因为个人原因（懒），就先保持这样吧，直接用就对了（嗯对）
+
 # 超星辅助助手 (Chaoxing Helper)
 
 面向超星学习通的作业粘贴辅助 + AI 对话浏览器扩展，兼容 Chrome / Edge（Manifest V3，Chromium 111+）。
@@ -5,6 +7,21 @@
 仓库：<https://github.com/WannaBeCute/chaoxing-helper>
 
 > 仅用于个人学习辅助。使用前请遵守所在学校、教师和超星平台的规定。
+
+## 怎么安装？
+
+大多数浏览器不能直接导入crx，比如Edge / Chrome，需以「加载解压缩的扩展」方式安装。
+
+1. **下载源码**：点击 [Source code (zip)](https://github.com/WannaBeCute/chaoxing-helper/archive/refs/tags/v1.4.0.zip) 下载压缩包。（下载crx会麻烦一点）
+2. **解压**：解压到任意文件夹，记住路径。
+3. **打开扩展管理页**：可从地址栏输入 `chrome://extensions`（Chrome）或 `edge://extensions`（Edge）跳转，也可从浏览器菜单进入「管理扩展」。
+4. **开启开发者模式**：打开页面右上角（Edge 为左下角）的「开发者模式」开关。
+5. **加载扩展**：点击「加载解压缩的扩展」，选中**你解压的那个文件夹**，即可安装完成。如果报错，刷新浏览器重复步骤就行
+
+> ⚠️ 加载的是解压后的文件夹而非压缩包；请保留该文件夹，删除后扩展会失效。
+
+
+
 
 ## 功能
 
@@ -106,29 +123,6 @@
 - 填入作业的图片/附件会通过超星页面自身接口上传到超星，这是作业内容的一部分。
 - 本扩展不收集统计、不上传浏览记录。
 
-## 更新检查与 Release 格式
-
-- 更新源固定为 `WannaBeCute/chaoxing-helper` 的 latest Release，接口为 `https://api.github.com/repos/WannaBeCute/chaoxing-helper/releases/latest`。
-- 版本比较使用 `manifest.version` 与 Release tag（自动忽略前导 `v`），只有 Release 版本更高时才提示更新。
-- 设置页最底部提供“检查更新”；扩展每 24 小时自动检查一次，发现新版本时在超星页面面板内显示非打断提醒。
-- 面板提醒可以直接选择 GitHub 或其他下载源；勾选“不再提醒”后永久关闭，可在设置页“接收启动更新提醒”重新开启；直接关闭则次日继续提醒。
-- GitHub 下载源优先使用 Release 中上传的 `.crx` / `.zip` 附件，没有附件时回退到 Release 页面。
-- 其他下载源和更新内容从 Release 正文按以下固定格式提取：
-
-```markdown
-## 📥 下载
-[夸克网盘，密码：1234](https://example.com/download)
-
-## 更新内容
-- 新增功能 A
-- 修复问题 B
-
-## 致谢
-```
-
-- “更新内容”只提取 `## 更新内容` 到下一个 `##` 之间的文字；“下载”栏目中的链接和“密码：”后的值会用于第二个下载源。
-- 如果 Release 没有“更新内容”，提醒中只显示版本信息；如果其他下载源提取失败，则只提供 GitHub 源。
-
 ## 版本号
 
 - 采用 `MAJOR.MINOR.PATCH`：新增功能升 MINOR，修复升 PATCH，不兼容变更升 MAJOR。
@@ -189,11 +183,3 @@ chrome.exe --pack-extension="C:\path\to\chaoxing-helper" `
 字体解码算法与 `src/font-map.json` 参考自 [Samueli924/chaoxing](https://github.com/Samueli924/chaoxing)（GPL-3.0）。
 
 Markdown/高亮等第三方依赖的许可证见 [THIRD_PARTY_NOTICES.txt](chaoxing-helper/THIRD_PARTY_NOTICES.txt)。
-
-## 贡献
-
-欢迎提交 Issue / PR。提交前请：
-
-- 不要提交任何 API Key、Cookie、`.pem` 或包含个人作业内容的截图；
-- 说明复现步骤和预期行为；
-- 保持现有 GPL-3.0 许可证与第三方声明。
