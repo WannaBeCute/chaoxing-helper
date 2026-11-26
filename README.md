@@ -1,12 +1,18 @@
 > AI大人顺手帮我先写好了README.md还有Release，因为个人原因（懒），就先保持这样吧，反正扩展写好了，直接用就对了（嗯对）
 
+
+
+<div align="center">
+
 # 超星辅助助手 (Chaoxing Helper)
 
-面向超星学习通的作业粘贴辅助 + AI 对话浏览器扩展，兼容 Chrome / Edge（Manifest V3，Chromium 111+）。
+**面向超星学习通的作业粘贴辅助 + AI 对话浏览器扩展，兼容 Chrome / Edge（Manifest V3，Chromium 111+）。**
 
-仓库：<https://github.com/WannaBeCute/chaoxing-helper>
+</div>
 
-> 仅用于个人学习辅助。使用前请遵守所在学校、教师和超星平台的规定。
+---
+
+**声明**：本项目仅用于个人学习辅助，**不提供、也不鼓励任何违反学术诚信、平台规则或法律法规的使用方式**。使用前请遵守所在学校、教师及相关平台的规定；使用者因违规使用本项目产生的一切后果，**由使用者本人承担**。
 
 ## 怎么安装？
 
