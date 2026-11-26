@@ -10,8 +10,9 @@
 - **粘贴限制检测**：自动识别当前作业是否存在 `beforepaste` / 内联 `onpaste` 拦截。
 - **无编辑器收起**：没有作业输入框时只显示可拖动悬浮球，不自动展开。
 - **题目提取**：支持 `.questionLi` 与章节测验 `.TiMu / .Zy_TItle`，递归扫描同源 iframe，并解密 `font-cxsecret` 字体。
-- **AI 对话**：OpenAI 兼容接口、流式输出、完整 Markdown 渲染、代码高亮与复制、重新生成。
-- **多模态上传**：模型支持多模态且开启“模型识图”时，可上传图片；未开启且本地识别未安装时禁用文件上传。
+- **AI 对话**：OpenAI 兼容接口、流式输出、完整 Markdown 渲染、代码高亮与复制、重新生成，并在每条 AI 消息上方显示本次/累计 tokens。
+- **多模态上传**：模型支持多模态且开启“模型识图”时，可上传图片；DeepSeek 厂商还可通过官方 OCR API 上传 PDF/Word/PPT/图片并提取文本。
+- **DeepSeek OCR / 文件解析**：使用官方 `https://api.deepseek.com/v1/tools/ocr`，支持 PDF、DOC/DOCX、PPT/PPTX 和常见图片；按页提取文字，附件只保留当前页面，刷新后清除。
 - **对话管理**：新建草稿、刷新列表、重命名/删除、绑定 Chaoxing 页面、跳转、最近绑定对话自动打开。
 - **对话缓存**：本地 `chrome.storage.local`，8MB / 30 个对话软上限，超限提示清理；7 天清理默认关闭。
 - **设置持久化**：API 配置、面板模式、识图开关、最近对话均会保存。
@@ -74,6 +75,12 @@
 - Endpoint、API Key、Model，以及“获取 API”链接。
 - 预设模型的多模态能力与上下文长度由内置配置自动填写并只读；自定义模型可手动填写。
 - 已包含 `deepseek-flash`、`gpt-4.1`、`kimi-k2`、`glm-4.5`、`qwen2.5vl` 等模型。
+- `deepseek-flash` 按官方文档标记为支持图像理解/多模态。
+- 选择 DeepSeek 并填写 API Key 后，PDF/Word/PPT/图片附件会走 DeepSeek 官方 OCR API：
+  - 接口：`https://api.deepseek.com/v1/tools/ocr`
+  - 只提取文本，不做抽象图像理解（图片在“模型识图”开启时仍会直接交给多模态模型）。
+  - OCR 为付费接口（官方按页计费），单个附件限制 20MB。
+  - 参考：[OCR 文档](https://api-docs.deepseek.com/zh-cn/guides/ocr/)、[文件解析](https://api-docs.deepseek.com/zh-cn/guides/document_parsing/)。
 - 测试连接、保存设置。
 
 当前仅支持 OpenAI 兼容接口，不支持 Claude / Gemini 原生协议。自定义厂商请填写兼容 `/chat/completions` 的 Endpoint。
@@ -82,6 +89,7 @@
 
 - API Key 保存在本机 `chrome.storage.local`，**不加密**，不会回传给网页；请勿在共享电脑上保存密钥。
 - AI 对话会把题目文本、你发送的文本/图片和对话内容发送给你配置的 API 服务商。
+- 使用 DeepSeek OCR 时，附件文件会发送到 DeepSeek 官方 OCR 接口，仅用于提取文字。
 - 上传给 AI 的附件只存在于当前页面内存，不写入对话缓存；刷新页面后清除。对话缓存只保留文字和附件名称。
 - 填入作业的图片/附件会通过超星页面自身接口上传到超星，这是作业内容的一部分。
 - 本扩展不收集统计、不上传浏览记录。
@@ -97,13 +105,16 @@
 - 安装并验证后，本地 OCR / PDF / Word 可用，AI 文件上传不再受“必须多模态”的限制；
 - 卸载后恢复仅多模态上传；
 - 依赖未安装时，“自动识别题目中的图片”开关只保存偏好，不执行 OCR。
+- DeepSeek 用户当前可以直接使用官方 OCR API 处理 AI 附件，不依赖本地 OCR 包。
+- 需要完全离线的 OCR / PDF / Word 时，仍需等待本地识别依赖包。
 
 > 当前版本 **尚未实现依赖包安装器**，设置页中的 OCR 开关是预置偏好。由于 Chrome MV3 不允许扩展直接执行任意外部 JS，依赖包需要采用独立扩展包或沙箱运行时方案，具体形式将在后续版本确定。
 
 ## 已知限制
 
 - 题目提取只支持 `.questionLi` / `.TiMu` 结构及同源 iframe；跨域 iframe、PDF/PPT/图片课件无法纯 DOM 提取。
-- OCR、PDF、Word 本地识别尚未接入。
+- OCR、PDF、Word 本地识别尚未接入；DeepSeek 用户可使用官方 OCR API，但需要有效的 DeepSeek API Key，并按官方页面计费。
+- DeepSeek OCR 单个附件当前限制 20MB。
 - 预设模型能力来自内置配置，服务商调整 API 后可能需要更新；请以官方文档为准。
 - API Key 只保存在本地扩展存储，不加密。
 - 本项目与超星学习通官方无关。

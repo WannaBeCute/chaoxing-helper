@@ -578,10 +578,11 @@
     if (event.source !== window) return;
     const data = event.data;
     if (!data || data.__cxh !== 'cxh-v1' || data.source !== 'bridge') return;
-    if (data.type === 'ai:chunk' || data.type === 'ai:done' || data.type === 'ai:error') {
+    if (data.type === 'ai:chunk' || data.type === 'ai:usage' || data.type === 'ai:done' || data.type === 'ai:error') {
       const handler = aiStreams.get(data.requestId);
       if (!handler) return;
       if (data.type === 'ai:chunk' && handler.onChunk) handler.onChunk(data.delta || '');
+      else if (data.type === 'ai:usage' && handler.onUsage) handler.onUsage(data.usage || null);
       else if (data.type === 'ai:done') {
         if (handler.__timer) clearTimeout(handler.__timer);
         aiStreams.delete(data.requestId);

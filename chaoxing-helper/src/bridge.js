@@ -318,6 +318,8 @@
       if (!message || !message.type) return;
       if (message.type === 'chunk') {
         post({ type: 'ai:chunk', requestId, delta: message.delta || '' });
+      } else if (message.type === 'usage') {
+        post({ type: 'ai:usage', requestId, usage: message.usage });
       } else if (message.type === 'done') {
         post({ type: 'ai:done', requestId });
         activePorts.delete(requestId);
@@ -408,6 +410,17 @@
       case 'fontMap': {
         const text = await loadFontMapChunked();
         reply(requestId, true, text);
+        return;
+      }
+      case 'deepseekOcr': {
+        const response = await sendRuntimeMessage({
+          type: 'cxh:deepseekOcr',
+          name: payload && payload.name,
+          type: payload && payload.type,
+          data: payload && payload.data,
+        });
+        if (!response.ok) throw new Error(response.error || 'DeepSeek OCR 失败');
+        reply(requestId, true, response);
         return;
       }
       case 'markdown:render':

@@ -41,6 +41,7 @@
     draftTimer: 0,
     streamRenderTimer: 0,
     pendingStreamText: null,
+    ocrBusy: false,
   };
 
   const AI_STYLES = `
@@ -96,6 +97,13 @@
     }
     .cxh-ai-empty strong { display: block; margin-bottom: 6px; color: #4d6384; font-size: 13px; }
     .cxh-ai-msg { display: flex; flex-direction: column; gap: 4px; max-width: 100%; }
+    .cxh-ai-msg.assistant { align-self: flex-start; width: fit-content; max-width: 92%; }
+    .cxh-ai-msg.assistant .cxh-ai-msg-head { width: 100%; }
+    .cxh-ai-msg.assistant .cxh-ai-msg-body { width: 100%; max-width: 100%; }
+    .cxh-ai-msg-tokens {
+      margin-left: auto; color: #98a2b3; font-weight: 400; font-size: 9.5px;
+      white-space: nowrap; flex: none;
+    }
     .cxh-ai-msg.user { align-items: flex-end; }
     .cxh-ai-msg-head { display: flex; align-items: center; gap: 6px; color: #8a97ab; font-size: 10px; }
     .cxh-ai-msg-body {
@@ -342,7 +350,11 @@
         state.vision = !!event.target.checked;
         updateAttachState();
         app.bridgeRequest('prefs:set', { patch: { vision: state.vision } }, 5000).catch(() => {});
-        if (!state.vision) setStatus('已关闭模型识图；未启用本地 OCR/文档识别，文件上传已禁用。');
+        if (!state.vision) {
+          setStatus(deepseekOcrAvailable()
+            ? '已关闭模型识图；图片/PDF/Word 将使用 DeepSeek OCR。'
+            : '已关闭模型识图；未启用本地 OCR/文档识别，文件上传已禁用。');
+        }
       }
     });
     view.addEventListener('dragover', (event) => {
@@ -610,6 +622,7 @@
         display: item.display,
         attachments: item.attachments,
         extracted: item.extracted,
+        usage: item.usage,
         ts: item.ts,
       })),
     };
@@ -771,12 +784,26 @@
       return;
     }
     const markdownTasks = [];
+    let cumulativeTokens = 0;
     state.chat.messages.forEach((message, index) => {
       const item = document.createElement('div');
       item.className = 'cxh-ai-msg ' + (message.role === 'assistant' ? 'assistant' : message.role === 'system' ? 'system' : 'user');
       const head = document.createElement('div');
       head.className = 'cxh-ai-msg-head';
       head.textContent = message.role === 'assistant' ? 'AI' : message.role === 'system' ? '提示' : '你';
+      if (message.role === 'assistant' && message.usage) {
+        const promptTokens = Number(message.usage.prompt_tokens ?? message.usage.input_tokens) || 0;
+        const completionTokens = Number(message.usage.completion_tokens ?? message.usage.output_tokens) || 0;
+        const totalTokens = Number(message.usage.total_tokens) || (promptTokens + completionTokens);
+        if (totalTokens > 0) {
+          cumulativeTokens += totalTokens;
+          const tokenEl = document.createElement('span');
+          tokenEl.className = 'cxh-ai-msg-tokens';
+          tokenEl.textContent = `本次 ${totalTokens.toLocaleString('zh-CN')} · 累计 ${cumulativeTokens.toLocaleString('zh-CN')} tokens`;
+          tokenEl.title = `输入 ${promptTokens.toLocaleString('zh-CN')} / 输出 ${completionTokens.toLocaleString('zh-CN')}`;
+          head.appendChild(tokenEl);
+        }
+      }
       const body = document.createElement('div');
       body.className = 'cxh-ai-msg-body';
       if (message.role === 'assistant') {
@@ -955,6 +982,12 @@
 
   function updateSendState() {
     if (!state.sendEl) return;
+    if (state.ocrBusy) {
+      state.sendEl.disabled = true;
+      state.sendEl.dataset.ai = 'send';
+      state.sendEl.textContent = '识别中…';
+      return;
+    }
     if (state.streaming) {
       state.sendEl.disabled = false;
       state.sendEl.dataset.ai = 'stop';
@@ -967,49 +1000,91 @@
     state.sendEl.textContent = '发送';
   }
 
+  function deepseekOcrAvailable() {
+    const settings = state.settings;
+    if (!settings || !settings.hasApiKey) return false;
+    return settings.provider === 'deepseek'
+      || /api\.deepseek\.com/i.test(String(settings.endpoint || ''));
+  }
+
   function updateAttachState() {
     const attach = app.shadow.querySelector('[data-ai="attach"]');
     if (!attach) return;
-    const enabled = !!state.vision;
+    const vision = !!state.vision;
+    const ocr = deepseekOcrAvailable();
+    const enabled = vision || ocr;
     attach.disabled = !enabled;
     attach.title = enabled
-      ? '上传图片或文本文件；附件只用于当前页面，刷新后清除'
+      ? (ocr
+        ? '上传图片/PDF/Word：图片可识图，文档使用 DeepSeek OCR（会消耗 API）'
+        : '上传图片或文本文件；附件只用于当前页面，刷新后清除')
       : '未开启多模态，且本地 OCR/文档识别未启用，暂不支持文件上传';
+  }
+
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || '');
+        const index = result.indexOf(',');
+        resolve(index >= 0 ? result.slice(index + 1) : result);
+      };
+      reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+      reader.readAsDataURL(file);
+    });
   }
 
   function addFiles(files) {
     if (!files.length) return;
-    if (!state.vision) {
+    const ocr = deepseekOcrAvailable();
+    if (!state.vision && !ocr) {
       setStatus('未开启多模态，且本地 OCR/文档识别未启用，暂不支持文件上传。', true);
       return;
     }
     setStatus('');
     files.forEach((file) => {
       if (file.size <= 0) return;
-      if (file.type.startsWith('image/')) {
-        if (!state.vision) {
-          setStatus('当前未启用“模型识图”，图片暂不能发送；阶段 2 会接入本地 OCR。', true);
+      const lower = String(file.name || '').toLowerCase();
+      const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(lower);
+      if (isImage) {
+        if (state.vision) {
+          if (file.size > MAX_IMAGE_BYTES) {
+            setStatus(`图片「${file.name}」超过 5MB，已跳过。`, true);
+            return;
+          }
+          const reader = new FileReader();
+          reader.onload = () => {
+            state.attachments.push({
+              id: `att_${Date.now()}_${Math.random()}`,
+              kind: 'image',
+              name: file.name || '图片',
+              dataUrl: String(reader.result || ''),
+            });
+            renderAttachments();
+            updateSendState();
+          };
+          reader.readAsDataURL(file);
           return;
         }
-        if (file.size > MAX_IMAGE_BYTES) {
-          setStatus(`图片「${file.name}」超过 5MB，已跳过。`, true);
-          return;
-        }
-        const reader = new FileReader();
-        reader.onload = () => {
+        if (ocr) {
+          if (file.size > 20 * 1024 * 1024) {
+            setStatus(`图片「${file.name}」超过 20MB，已跳过。`, true);
+            return;
+          }
           state.attachments.push({
             id: `att_${Date.now()}_${Math.random()}`,
-            kind: 'image',
+            kind: 'document',
             name: file.name || '图片',
-            dataUrl: String(reader.result || ''),
+            type: file.type || 'image/png',
+            file,
           });
           renderAttachments();
           updateSendState();
-        };
-        reader.readAsDataURL(file);
+          return;
+        }
+        setStatus('当前未启用“模型识图”，且 DeepSeek OCR 不可用。', true);
         return;
       }
-      const lower = String(file.name || '').toLowerCase();
       if (/\.(txt|md|csv|json|log|xml|html?)$/.test(lower)) {
         if (file.size > 1024 * 1024) {
           setStatus(`文件「${file.name}」超过 1MB，已跳过。`, true);
@@ -1030,7 +1105,27 @@
         reader.readAsText(file);
         return;
       }
-      setStatus('阶段 1 暂支持文本文件和图片；PDF/Word 文档解析将在阶段 2/3 接入。', true);
+      if (/\.(pdf|docx?|pptx?)$/.test(lower)) {
+        if (!ocr) {
+          setStatus('PDF/Word/PPT 需要 DeepSeek OCR 或本地识别依赖，当前不可用。', true);
+          return;
+        }
+        if (file.size > 20 * 1024 * 1024) {
+          setStatus(`文件「${file.name}」超过 20MB，已跳过。`, true);
+          return;
+        }
+        state.attachments.push({
+          id: `att_${Date.now()}_${Math.random()}`,
+          kind: 'document',
+          name: file.name || '文档',
+          type: file.type || 'application/octet-stream',
+          file,
+        });
+        renderAttachments();
+        updateSendState();
+        return;
+      }
+      setStatus('暂不支持该文件格式；支持图片、PDF、Word、PPT 和纯文本文件。', true);
     });
   }
 
@@ -1043,7 +1138,11 @@
       const chip = document.createElement('div');
       chip.className = 'cxh-ai-chip';
       const label = document.createElement('span');
-      label.textContent = item.kind === 'image' ? `图片：${item.name}` : `文本：${item.name}`;
+      label.textContent = item.kind === 'image'
+        ? `图片：${item.name}`
+        : item.kind === 'text'
+          ? `文本：${item.name}`
+          : `文档：${item.name}`;
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.textContent = '×';
@@ -1186,6 +1285,9 @@
         assistant.content += delta;
         scheduleStreamRender(assistant.content);
       },
+      onUsage(usage) {
+        if (usage) assistant.usage = usage;
+      },
       onDone() {
         if (state.streamRenderTimer) {
           clearTimeout(state.streamRenderTimer);
@@ -1256,7 +1358,7 @@
   }
 
   async function sendMessage() {
-    if (state.streaming) return;
+    if (state.streaming || state.ocrBusy) return;
     if (!state.chat) await ensureLoaded();
     if (!state.chat) {
       setStatus('对话尚未准备好，请稍后重试。', true);
@@ -1269,16 +1371,6 @@
     }
     const typed = state.inputEl.value.trim();
     if (!typed && !state.attachments.length) return;
-
-    // 草稿在发送第一条消息时才真正创建、进入列表并绑定页面。
-    if (state.chat.isDraft) {
-      state.chat.id = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      state.chat.isDraft = false;
-      state.chat.createdAt = state.chat.createdAt || Date.now();
-      state.chat.updatedAt = Date.now();
-      state.prefs = { ...(state.prefs || {}), lastChatId: state.chat.id };
-      app.bridgeRequest('prefs:set', { patch: { lastChatId: state.chat.id } }, 5000).catch(() => {});
-    }
 
     // 附件内容只用于当前页面内的对话，不写入 chrome.storage；刷新后清除。
     let turnContent = typed || '请查看附件内容。';
@@ -1296,6 +1388,49 @@
       turnContent += `\n\n[已附带 ${images.length} 张图片，请结合图片内容回答。]`;
     }
 
+    const documents = state.attachments.filter((item) => item.kind === 'document');
+    if (documents.length) {
+      if (!deepseekOcrAvailable()) {
+        setStatus('当前附件需要 DeepSeek OCR，但当前厂商/API Key 不可用。', true);
+        return;
+      }
+      state.ocrBusy = true;
+      updateSendState();
+      try {
+        for (const doc of documents) {
+          setStatus(`正在识别附件 ${doc.name}…`);
+          let base64;
+          try {
+            base64 = await fileToBase64(doc.file);
+          } catch (error) {
+            setStatus(`读取附件失败：${doc.name}`, true);
+            return;
+          }
+          let result;
+          try {
+            result = await app.bridgeRequest('deepseekOcr', {
+              name: doc.name,
+              type: doc.type,
+              data: base64,
+            }, 240000);
+          } catch (error) {
+            setStatus(`附件识别失败：${error.message}`, true);
+            return;
+          }
+          if (!result || !result.ok) {
+            setStatus(`附件识别失败：${result && result.error || 'DeepSeek OCR 不可用'}`, true);
+            return;
+          }
+          const block = `【附件 OCR：${doc.name}】\n${String(result.text || '').trim() || '（未识别到文字）'}`;
+          fileContext += (fileContext ? '\n\n' : '') + block;
+          turnContent += `\n\n${block}`;
+        }
+      } finally {
+        state.ocrBusy = false;
+        updateSendState();
+      }
+    }
+
     let extracted = false;
     if (shouldReadCurrentQuestions(typed)) {
       setStatus('正在解析当前页题目…');
@@ -1309,6 +1444,16 @@
         }
       }
       setStatus('');
+    }
+
+    // 草稿在发送第一条消息时才真正创建、进入列表并绑定页面。
+    if (state.chat.isDraft) {
+      state.chat.id = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      state.chat.isDraft = false;
+      state.chat.createdAt = state.chat.createdAt || Date.now();
+      state.chat.updatedAt = Date.now();
+      state.prefs = { ...(state.prefs || {}), lastChatId: state.chat.id };
+      app.bridgeRequest('prefs:set', { patch: { lastChatId: state.chat.id } }, 5000).catch(() => {});
     }
 
     const message = {

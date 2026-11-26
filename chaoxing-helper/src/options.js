@@ -29,7 +29,7 @@ const PROVIDERS = {
     models: [
       { id: 'deepseek-chat', vision: false, context: 64000 },
       { id: 'deepseek-reasoner', vision: false, context: 64000 },
-      { id: 'deepseek-flash', vision: false, context: 128000 },
+      { id: 'deepseek-flash', vision: true, context: 128000 },
     ],
     defaultModel: 'deepseek-chat',
   },
