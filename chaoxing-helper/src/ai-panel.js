@@ -5,8 +5,8 @@
  * - bridgeRequest / startAI：访问扩展后台
  * - insertTextIntoCurrentEditor：把 AI 答案填到当前光标
  *
- * 阶段 1 提供：AI 文本对话、对话列表、页面绑定、基础题目提取、
- * 对话缓存与简易多轮上下文。字体解码/OCR/文档解析在阶段 2 接入。
+ * 提供：AI 文本对话、对话列表、页面绑定、题目提取、图片/文档识别、
+ * 对话缓存与简易多轮上下文。字体解码见 font-decode.js。
  */
 (() => {
   'use strict';
@@ -197,8 +197,14 @@
     .cxh-ai-modal-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
     .cxh-ai-modal-actions button { height: 30px; padding: 0 10px; border: 1px solid #dce4f2; border-radius: 8px; background: #fff; color: #45608a; font: 600 11px/1 "Microsoft YaHei", sans-serif; cursor: pointer; }
     .cxh-ai-modal-actions button.primary { border: 0; color: #fff; background: linear-gradient(135deg, #3b7bf2, #1f56c9); }
+    .cxh-ai-modal-actions button:disabled { opacity: .55; cursor: not-allowed; }
     .cxh-ai-note { color: #98a2b3; font-size: 10px; line-height: 1.6; }
     .cxh-ai-note.error { color: #a13232; }
+    .cxh-ai-image-prompt {
+      display: flex; flex-direction: column; gap: 7px; padding: 8px 9px;
+      border: 1px solid #f1d7a8; border-radius: 8px; background: #fff8ec; color: #805200; font-size: 10.5px;
+    }
+    .cxh-ai-image-prompt .cxh-ai-modal-actions { justify-content: flex-start; }
     .cxh-ai-msg-body.markdown { white-space: normal; }
     .cxh-ai-msg-body.markdown > :first-child { margin-top: 0; }
     .cxh-ai-msg-body.markdown > :last-child { margin-bottom: 0; }
@@ -351,9 +357,10 @@
         updateAttachState();
         app.bridgeRequest('prefs:set', { patch: { vision: state.vision } }, 5000).catch(() => {});
         if (!state.vision) {
-          setStatus(deepseekOcrAvailable()
-            ? '已关闭模型识图；图片/PDF/Word 将使用 DeepSeek OCR。'
-            : '已关闭模型识图；未启用本地 OCR/文档识别，文件上传已禁用。');
+          const extract = extractModelName();
+          if (extract) setStatus(`已关闭模型识图；上传的图片/文档将由 ${extract} 提取内容。`);
+          else if (deepseekOcrAvailable()) setStatus('已关闭模型识图；图片/PDF/Word 将使用 DeepSeek OCR。');
+          else setStatus('已关闭模型识图；未配置文件识别模型，图片上传已禁用。');
         }
       }
     });
@@ -407,8 +414,8 @@
         else if (action === 'extract') showExtraction();
         else if (action === 'jump') jumpToBound();
         else if (action === 'attach') {
-          if (!state.vision) {
-            setStatus('未开启多模态，且本地 OCR/文档识别未启用，暂不支持文件上传。', true);
+          if (!state.vision && !imageExtractAvailable() && !deepseekOcrAvailable()) {
+            setStatus('未开启多模态，且未配置文件识别模型，暂不支持文件上传。', true);
             return;
           }
           app.shadow.querySelector('[data-ai="file"]').click();
@@ -1007,18 +1014,56 @@
       || /api\.deepseek\.com/i.test(String(settings.endpoint || ''));
   }
 
+  function extractModelName() {
+    return String((state.settings && state.settings.extractModel) || '').trim();
+  }
+
+  function isDeepSeekEndpoint() {
+    return !!state.settings && /api\.deepseek\.com/i.test(String(state.settings.endpoint || ''));
+  }
+
+  function modelApiReady() {
+    const settings = state.settings;
+    return !!settings && (!!settings.hasApiKey || settings.provider === 'ollama');
+  }
+
+  function imageExtractAvailable() {
+    const settings = state.settings;
+    return !!settings && modelApiReady()
+      && (!!extractModelName() || !!settings.supportsVision);
+  }
+
+  function documentExtractAvailable() {
+    if (!state.settings || !modelApiReady()) return false;
+    if (extractModelName() && isDeepSeekEndpoint()) return true;
+    return deepseekOcrAvailable();
+  }
+
+  function questionImageModel() {
+    const settings = state.settings;
+    if (!settings || !modelApiReady()) return '';
+    return extractModelName() || (settings.supportsVision ? String(settings.model || '').trim() : '');
+  }
+
   function updateAttachState() {
     const attach = app.shadow.querySelector('[data-ai="attach"]');
     if (!attach) return;
     const vision = !!state.vision;
+    const extract = extractModelName();
     const ocr = deepseekOcrAvailable();
-    const enabled = vision || ocr;
+    const enabled = vision || imageExtractAvailable() || ocr;
     attach.disabled = !enabled;
-    attach.title = enabled
-      ? (ocr
-        ? '上传图片/PDF/Word：图片可识图，文档使用 DeepSeek OCR（会消耗 API）'
-        : '上传图片或文本文件；附件只用于当前页面，刷新后清除')
-      : '未开启多模态，且本地 OCR/文档识别未启用，暂不支持文件上传';
+    if (!enabled) {
+      attach.title = '未开启多模态，且未配置文件识别模型，暂不支持文件上传';
+      return;
+    }
+    if (extract) {
+      attach.title = `上传图片/PDF/Word：使用 ${extract} 提取内容（会消耗 API）；附件只用于当前页面`;
+      return;
+    }
+    attach.title = ocr
+      ? '上传图片/PDF/Word：图片可识图，文档使用 DeepSeek OCR（会消耗 API）'
+      : '上传图片或文本文件；附件只用于当前页面，刷新后清除';
   }
 
   function fileToBase64(file) {
@@ -1036,9 +1081,10 @@
 
   function addFiles(files) {
     if (!files.length) return;
+    const extract = extractModelName();
     const ocr = deepseekOcrAvailable();
-    if (!state.vision && !ocr) {
-      setStatus('未开启多模态，且本地 OCR/文档识别未启用，暂不支持文件上传。', true);
+    if (!state.vision && !imageExtractAvailable() && !ocr) {
+      setStatus('未开启多模态，且未配置文件识别模型，暂不支持文件上传。', true);
       return;
     }
     setStatus('');
@@ -1047,9 +1093,10 @@
       const lower = String(file.name || '').toLowerCase();
       const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(lower);
       if (isImage) {
-        if (state.vision) {
-          if (file.size > MAX_IMAGE_BYTES) {
-            setStatus(`图片「${file.name}」超过 5MB，已跳过。`, true);
+        if (imageExtractAvailable() || state.vision) {
+          const limit = imageExtractAvailable() ? 10 * 1024 * 1024 : MAX_IMAGE_BYTES;
+          if (file.size > limit) {
+            setStatus(`图片「${file.name}」超过 ${Math.round(limit / 1024 / 1024)}MB，已跳过。`, true);
             return;
           }
           const reader = new FileReader();
@@ -1082,7 +1129,7 @@
           updateSendState();
           return;
         }
-        setStatus('当前未启用“模型识图”，且 DeepSeek OCR 不可用。', true);
+        setStatus('当前未配置文件识别模型，也未开启模型识图，图片无法识别。', true);
         return;
       }
       if (/\.(txt|md|csv|json|log|xml|html?)$/.test(lower)) {
@@ -1106,12 +1153,12 @@
         return;
       }
       if (/\.(pdf|docx?|pptx?)$/.test(lower)) {
-        if (!ocr) {
-          setStatus('PDF/Word/PPT 需要 DeepSeek OCR 或本地识别依赖，当前不可用。', true);
+        if (!documentExtractAvailable()) {
+          setStatus('PDF/Word/PPT 需要 DeepSeek 文件识别模型或 DeepSeek OCR，当前不可用。', true);
           return;
         }
-        if (file.size > 20 * 1024 * 1024) {
-          setStatus(`文件「${file.name}」超过 20MB，已跳过。`, true);
+        if (file.size > 100 * 1024 * 1024) {
+          setStatus(`文件「${file.name}」超过 100MB，已跳过。`, true);
           return;
         }
         state.attachments.push({
@@ -1193,20 +1240,25 @@
     return docs;
   }
 
-  function extractQuestionsRaw() {
+  function collectQuestionNodes() {
     const questions = [];
     collectQuestionDocuments().forEach((doc) => {
       try {
         const questionLi = Array.from(doc.querySelectorAll('.questionLi'));
         if (questionLi.length) {
-          questionLi.forEach((node) => questions.push({ node, type: 'questionLi' }));
+          questionLi.forEach((node) => questions.push({ node, type: 'questionLi', doc }));
           return;
         }
-        doc.querySelectorAll('.TiMu').forEach((node) => questions.push({ node, type: 'TiMu' }));
+        doc.querySelectorAll('.TiMu').forEach((node) => questions.push({ node, type: 'TiMu', doc }));
       } catch (error) {
         /* ignore inaccessible document */
       }
     });
+    return questions;
+  }
+
+  function extractQuestionsRaw() {
+    const questions = collectQuestionNodes();
     if (!questions.length) return '';
     const blocks = [];
     questions.forEach(({ node, type }, index) => {
@@ -1242,6 +1294,72 @@
       blocks.push(lines.join('\n'));
     });
     return blocks.join('\n\n');
+  }
+
+  function resolveQuestionImageSrc(img, doc) {
+    const raw = String(
+      img.currentSrc
+      || img.src
+      || img.getAttribute('data-src')
+      || img.getAttribute('data-original')
+      || '',
+    ).trim();
+    if (!raw) return '';
+    if (/^(data:image\/|blob:)/i.test(raw)) return raw;
+    try {
+      return new URL(raw, (doc && doc.baseURI) || location.href).href;
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function collectQuestionImages() {
+    const images = [];
+    const seen = new Set();
+    collectQuestionNodes().forEach(({ node, doc }, index) => {
+      let list = [];
+      try {
+        list = Array.from(node.querySelectorAll('img'));
+      } catch (error) {
+        list = [];
+      }
+      list.forEach((img) => {
+        const src = resolveQuestionImageSrc(img, doc);
+        if (!src || seen.has(src)) return;
+        if (/^data:image\/gif;base64,R0lGODlhAQABA/i.test(src)) return;
+        const width = Number(img.naturalWidth || img.width || 0);
+        const height = Number(img.naturalHeight || img.height || 0);
+        if (width && height && width <= 12 && height <= 12) return;
+        const marker = `${img.className || ''} ${img.id || ''} ${img.alt || ''}`;
+        if (/\b(icon|logo|avatar|emoji|loading|spacer)\b/i.test(marker)) return;
+        seen.add(src);
+        images.push({
+          src,
+          alt: String(img.alt || '').trim(),
+          questionIndex: index + 1,
+        });
+      });
+    });
+    return images;
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(reader.error || new Error('读取图片失败'));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function questionImagePayload(image) {
+    if (/^data:image\//i.test(image.src)) return { dataUrl: image.src };
+    if (/^blob:/i.test(image.src)) {
+      const response = await fetch(image.src);
+      const blob = await response.blob();
+      return { dataUrl: await blobToDataUrl(blob) };
+    }
+    return { url: image.src };
   }
 
   function shouldReadCurrentQuestions(text) {
@@ -1378,27 +1496,61 @@
     const storedContent = typed || '（附件）';
     const display = typed || '（附件）';
     const attachments = state.attachments.map((item) => ({ name: item.name, kind: item.kind }));
-    const images = state.attachments.filter((item) => item.kind === 'image' && item.dataUrl).map((item) => item.dataUrl);
-    state.attachments.filter((item) => item.kind === 'text').forEach((item) => {
-      const block = `【附件：${item.name}】\n${item.text}`;
+    const imageAttachments = state.attachments.filter((item) => item.kind === 'image' && item.dataUrl);
+    const appendBlock = (block) => {
       fileContext += (fileContext ? '\n\n' : '') + block;
       turnContent += `\n\n${block}`;
+    };
+    state.attachments.filter((item) => item.kind === 'text').forEach((item) => {
+      appendBlock(`【附件：${item.name}】\n${item.text}`);
     });
-    if (images.length) {
-      turnContent += `\n\n[已附带 ${images.length} 张图片，请结合图片内容回答。]`;
+
+    const extract = extractModelName();
+    let nativeImages = [];
+    if (imageAttachments.length) {
+      if (extract) {
+        state.ocrBusy = true;
+        updateSendState();
+        try {
+          for (let i = 0; i < imageAttachments.length; i += 1) {
+            const image = imageAttachments[i];
+            setStatus(`正在调用 ${extract} 识别图片「${image.name}」（${i + 1}/${imageAttachments.length}）…`);
+            let result;
+            try {
+              result = await app.bridgeRequest('extractImageText', {
+                dataUrl: image.dataUrl,
+                name: image.name,
+              }, 240000);
+            } catch (error) {
+              setStatus(`图片识别失败：${error.message}`, true);
+              return;
+            }
+            if (!result || !result.ok) {
+              setStatus(`图片识别失败：${result && result.error || '未知错误'}`, true);
+              return;
+            }
+            appendBlock(`【图片识别（${extract}）：${image.name}】\n${String(result.text || '').trim() || '（未识别到文字）'}`);
+          }
+        } finally {
+          state.ocrBusy = false;
+          updateSendState();
+        }
+      } else if (state.vision) {
+        nativeImages = imageAttachments.map((item) => item.dataUrl);
+        turnContent += `\n\n[已附带 ${nativeImages.length} 张图片，请结合图片内容回答。]`;
+      }
     }
 
     const documents = state.attachments.filter((item) => item.kind === 'document');
     if (documents.length) {
-      if (!deepseekOcrAvailable()) {
-        setStatus('当前附件需要 DeepSeek OCR，但当前厂商/API Key 不可用。', true);
+      if (!documentExtractAvailable()) {
+        setStatus('当前附件需要文件识别模型或 DeepSeek OCR，但当前 API 配置不可用。', true);
         return;
       }
       state.ocrBusy = true;
       updateSendState();
       try {
         for (const doc of documents) {
-          setStatus(`正在识别附件 ${doc.name}…`);
           let base64;
           try {
             base64 = await fileToBase64(doc.file);
@@ -1406,24 +1558,44 @@
             setStatus(`读取附件失败：${doc.name}`, true);
             return;
           }
-          let result;
-          try {
-            result = await app.bridgeRequest('deepseekOcr', {
-              name: doc.name,
-              type: doc.type,
-              data: base64,
-            }, 240000);
-          } catch (error) {
-            setStatus(`附件识别失败：${error.message}`, true);
-            return;
+          const useExtractModel = !!extract && isDeepSeekEndpoint();
+          if (useExtractModel) {
+            setStatus(`正在调用 ${extract} 识别文档「${doc.name}」…`);
+            let result;
+            try {
+              result = await app.bridgeRequest('extractDocumentText', {
+                name: doc.name,
+                type: doc.type,
+                data: base64,
+              }, 300000);
+            } catch (error) {
+              setStatus(`文档识别失败：${error.message}`, true);
+              return;
+            }
+            if (!result || !result.ok) {
+              setStatus(`文档识别失败：${result && result.error || '未知错误'}`, true);
+              return;
+            }
+            appendBlock(`【文档识别（${extract}）：${doc.name}】\n${String(result.text || '').trim() || '（未识别到文字）'}`);
+          } else {
+            setStatus(`正在调用 DeepSeek OCR 识别文档「${doc.name}」…`);
+            let result;
+            try {
+              result = await app.bridgeRequest('deepseekOcr', {
+                name: doc.name,
+                type: doc.type,
+                data: base64,
+              }, 240000);
+            } catch (error) {
+              setStatus(`文档识别失败：${error.message}`, true);
+              return;
+            }
+            if (!result || !result.ok) {
+              setStatus(`文档识别失败：${result && result.error || 'DeepSeek OCR 不可用'}`, true);
+              return;
+            }
+            appendBlock(`【文档 OCR：${doc.name}】\n${String(result.text || '').trim() || '（未识别到文字）'}`);
           }
-          if (!result || !result.ok) {
-            setStatus(`附件识别失败：${result && result.error || 'DeepSeek OCR 不可用'}`, true);
-            return;
-          }
-          const block = `【附件 OCR：${doc.name}】\n${String(result.text || '').trim() || '（未识别到文字）'}`;
-          fileContext += (fileContext ? '\n\n' : '') + block;
-          turnContent += `\n\n${block}`;
         }
       } finally {
         state.ocrBusy = false;
@@ -1463,7 +1635,7 @@
       attachments,
       extracted,
       sessionContext: fileContext,
-      sessionImages: images.length ? images : undefined,
+      sessionImages: nativeImages.length ? nativeImages : undefined,
       sessionTurnContent: turnContent,
       ts: Date.now(),
     };
@@ -1486,7 +1658,7 @@
     const apiMessages = [
       { role: 'system', content: buildSystemPrompt() },
       ...history,
-      { role: 'user', content: turnContent, images: images.length ? images : undefined },
+      { role: 'user', content: turnContent, images: nativeImages.length ? nativeImages : undefined },
     ];
     startAssistant(apiMessages);
   }
@@ -1647,8 +1819,12 @@
 
   async function showExtraction() {
     if (!state.chat) return;
+    if (!state.settings) {
+      try { await ensureLoaded(); } catch (error) { /* keep extraction available */ }
+    }
     setStatus('正在解析当前页题目…');
     const text = await currentQuestionText();
+    const images = collectQuestionImages();
     setStatus('');
     const root = app.shadow.querySelector('[data-ai="modalRoot"]');
     if (!root) return;
@@ -1661,15 +1837,28 @@
     heading.textContent = '当前页面题目文本';
     const pre = document.createElement('pre');
     pre.className = 'cxh-ai-modal-text';
-    pre.textContent = text || '当前页面没有解析到 .questionLi 题目结构。';
+    let extractionText = text || '';
+    pre.textContent = extractionText || '当前页面没有解析到 .questionLi 题目结构。';
     const note = document.createElement('div');
     note.className = 'cxh-ai-note';
     const iframeCount = document.querySelectorAll('iframe').length;
     note.textContent = text
-      ? '已解码超星加密字体；图片 OCR / 多模态识别将在 OCR 阶段接入。'
+      ? '已解码超星加密字体；可复制，或更新到当前对话的题目记忆。'
       : iframeCount
         ? '当前页面包含 iframe，但没有找到 .questionLi；题目可能在跨域 iframe、课程文档或图片中，纯 DOM 提取无法读取。'
         : '当前页面没有找到 .questionLi 题目结构。';
+    const imageNote = document.createElement('div');
+    imageNote.className = 'cxh-ai-note';
+    imageNote.hidden = !images.length;
+    const imageModel = questionImageModel();
+    if (images.length) {
+      imageNote.textContent = imageModel
+        ? `检测到 ${images.length} 张题目图片。`
+        : `检测到 ${images.length} 张题目图片；如需识别，请在设置中填写“文件识别模型”或开启主模型多模态。`;
+    }
+    const progress = document.createElement('div');
+    progress.className = 'cxh-ai-note';
+    progress.hidden = true;
     const frameReport = text ? '' : describeQuestionFrames();
     let bindingNote = null;
     const actions = document.createElement('div');
@@ -1684,13 +1873,18 @@
     copy.addEventListener('click', () => copyText(pre.textContent));
     close.addEventListener('click', closeFn);
     actions.append(copy);
-    if (state.chat.boundUrl === location.href && text) {
+    if (state.chat.boundUrl === location.href) {
       const update = document.createElement('button');
       update.type = 'button';
       update.className = 'primary';
       update.textContent = '更新记忆';
       update.addEventListener('click', async () => {
-        state.chat.memory = `【当前页面题目】\n${text.slice(0, 20000)}`;
+        const value = String(extractionText || '').trim();
+        if (!value) {
+          note.textContent = '当前没有可写入的题目内容。';
+          return;
+        }
+        state.chat.memory = `【当前页面题目】\n${value.slice(0, 20000)}`;
         state.chat.memoryUpdatedAt = Date.now();
         await persistChat();
         closeFn();
@@ -1704,7 +1898,75 @@
       bindingNote = note2;
     }
     actions.append(close);
+
+    let imagePrompt = null;
+    if (images.length && imageModel) {
+      imagePrompt = document.createElement('div');
+      imagePrompt.className = 'cxh-ai-image-prompt';
+      const promptText = document.createElement('span');
+      promptText.textContent = `是否调用 ${imageModel} 识别这 ${images.length} 张图片中的文字？`;
+      const promptActions = document.createElement('div');
+      promptActions.className = 'cxh-ai-modal-actions';
+      const recognize = document.createElement('button');
+      recognize.type = 'button';
+      recognize.className = 'primary';
+      recognize.textContent = '识别图片';
+      const skip = document.createElement('button');
+      skip.type = 'button';
+      skip.textContent = '暂不识别';
+      let recognizing = false;
+      skip.addEventListener('click', () => imagePrompt.remove());
+      recognize.addEventListener('click', async () => {
+        if (recognizing) return;
+        recognizing = true;
+        recognize.disabled = true;
+        skip.disabled = true;
+        progress.hidden = false;
+        progress.className = 'cxh-ai-note';
+        state.ocrBusy = true;
+        updateSendState();
+        const blocks = [];
+        let failed = 0;
+        try {
+          for (let i = 0; i < images.length; i += 1) {
+            const image = images[i];
+            progress.textContent = `正在调用 ${imageModel} 识别第 ${i + 1}/${images.length} 张图片…`;
+            try {
+              const payload = await questionImagePayload(image);
+              const result = await app.bridgeRequest('extractImageText', payload, 240000);
+              if (!result || !result.ok) throw new Error((result && result.error) || '图片识别失败');
+              const value = String(result.text || '').trim();
+              blocks.push(`【图片 ${i + 1}${image.questionIndex ? ` · 第 ${image.questionIndex} 题` : ''}】\n${value || '（未识别到文字）'}`);
+            } catch (error) {
+              failed += 1;
+              blocks.push(`【图片 ${i + 1}】\n（识别失败：${error.message}）`);
+            }
+          }
+        } finally {
+          state.ocrBusy = false;
+          updateSendState();
+        }
+        extractionText = [extractionText, '【图片识别文本】', ...blocks].filter(Boolean).join('\n\n');
+        pre.textContent = extractionText;
+        imagePrompt.remove();
+        progress.className = 'cxh-ai-note' + (failed === images.length ? ' error' : '');
+        progress.textContent = failed === images.length
+          ? `图片识别失败：${images.length} 张图片均未识别成功，请检查文件识别模型设置。`
+          : `识别完成：成功 ${images.length - failed} 张${failed ? `，失败 ${failed} 张` : ''}；题目内容已刷新。`;
+        note.textContent = '已解码超星加密字体；图片识别文字已追加到下方。';
+        setStatus(
+          failed === images.length ? '题目图片识别失败，请检查文件识别模型设置。' : '题目图片识别完成。',
+          failed === images.length,
+        );
+      });
+      promptActions.append(recognize, skip);
+      imagePrompt.append(promptText, promptActions);
+    }
+
     card.append(heading, pre, note);
+    if (imageNote && images.length) card.appendChild(imageNote);
+    if (imagePrompt) card.appendChild(imagePrompt);
+    if (images.length) card.appendChild(progress);
     if (bindingNote) card.appendChild(bindingNote);
     if (frameReport) {
       const frameNote = document.createElement('div');

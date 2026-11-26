@@ -28,7 +28,7 @@
     apiKey: '',
     supportsVision: true,
     contextWindow: 128000,
-    ocrImages: true,
+    extractModel: '',
     autoDeleteDays: 0,
   };
 
@@ -416,10 +416,32 @@
         const response = await sendRuntimeMessage({
           type: 'cxh:deepseekOcr',
           name: payload && payload.name,
-          type: payload && payload.type,
+          mimeType: payload && payload.type,
           data: payload && payload.data,
         });
         if (!response.ok) throw new Error(response.error || 'DeepSeek OCR 失败');
+        reply(requestId, true, response);
+        return;
+      }
+      case 'extractImageText': {
+        const response = await sendRuntimeMessage({
+          type: 'cxh:extractImageText',
+          dataUrl: payload && payload.dataUrl,
+          url: payload && payload.url,
+          prompt: payload && payload.prompt,
+        });
+        if (!response.ok) throw new Error(response.error || '图片识别失败');
+        reply(requestId, true, response);
+        return;
+      }
+      case 'extractDocumentText': {
+        const response = await sendRuntimeMessage({
+          type: 'cxh:extractDocumentText',
+          name: payload && payload.name,
+          mimeType: payload && payload.type,
+          data: payload && payload.data,
+        });
+        if (!response.ok) throw new Error(response.error || '文档识别失败');
         reply(requestId, true, response);
         return;
       }

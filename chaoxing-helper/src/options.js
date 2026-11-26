@@ -116,7 +116,9 @@ const modelSelectEl = $('modelSelect');
 const modelInputEl = $('modelInput');
 const contextEl = $('contextWindow');
 const visionEl = $('supportsVision');
-const ocrEl = $('ocrImages');
+const extractModelEl = $('extractModel');
+const testExtractEl = $('testExtract');
+const extractResultEl = $('extractResult');
 const autoDeleteEl = $('autoDeleteDays');
 const statusEl = $('status');
 const providerBadgeEl = $('providerBadge');
@@ -245,7 +247,7 @@ function collectSettings() {
     apiKey: apiKeyEl.value.trim(),
     supportsVision: !!visionEl.checked,
     contextWindow: Math.max(1024, parseInt(contextEl.value, 10) || 128000),
-    ocrImages: !!ocrEl.checked,
+    extractModel: extractModelEl.value.trim(),
     autoDeleteDays: parseInt(autoDeleteEl.value, 10) || 0,
   };
 }
@@ -323,7 +325,7 @@ function load() {
   chrome.storage.local.get([SETTINGS_KEY], (result) => {
     const settings = result[SETTINGS_KEY] || {};
     currentSettings = settings;
-    ocrEl.checked = settings.ocrImages !== false;
+    extractModelEl.value = settings.extractModel || '';
     autoDeleteEl.value = String(settings.autoDeleteDays || 0);
     apiKeyEl.value = settings.apiKey || '';
     visionEl.checked = settings.supportsVision !== false;
@@ -336,8 +338,7 @@ function load() {
 }
 
 providerEl.addEventListener('change', () => {
-  applyProvider(providerEl.value, {});
-  setStatus('');
+  applyProvider(providerEl.value, {});  setStatus('');
 });
 
 modelSelectEl.addEventListener('change', () => {
@@ -383,6 +384,56 @@ $('test').addEventListener('click', () => {
       }
       if (response && response.ok) setStatus(response.message || '连接成功', 'ok');
       else setStatus(response && response.message || '连接失败', 'error');
+    });
+  });
+});
+
+testExtractEl.addEventListener('click', () => {
+  let settings;
+  let url;
+  try {
+    settings = collectSettings();
+    url = validateSettings(settings);
+  } catch (error) {
+    extractResultEl.className = 'hint error';
+    extractResultEl.textContent = error.message;
+    return;
+  }
+  if (!settings.extractModel) {
+    extractResultEl.className = 'hint error';
+    extractResultEl.textContent = '请先填写文件识别模型，再进行检测。';
+    return;
+  }
+  requestHostPermission(url).then((granted) => {
+    if (!granted) {
+      extractResultEl.className = 'hint error';
+      extractResultEl.textContent = '未授权该 API 域名，无法检测。';
+      return;
+    }
+    testExtractEl.disabled = true;
+    extractResultEl.className = 'hint';
+    extractResultEl.textContent = '正在检测图片/文档能力，会产生少量 API 调用费用…';
+    chrome.runtime.sendMessage({ type: 'cxh:testExtractModel', settings }, (response) => {
+      testExtractEl.disabled = false;
+      if (chrome.runtime.lastError) {
+        extractResultEl.className = 'hint error';
+        extractResultEl.textContent = chrome.runtime.lastError.message;
+        return;
+      }
+      if (!response || !response.ok) {
+        extractResultEl.className = 'hint error';
+        extractResultEl.textContent = response && response.error || '检测失败';
+        return;
+      }
+      const docLabel = response.document
+        ? '支持'
+        : (/未提供标准文档解析/.test(String(response.documentDetail || '')) ? '需 DeepSeek' : '不支持');
+      extractResultEl.className = 'hint sub ' + (response.vision || response.document ? 'ok' : 'error');
+      extractResultEl.textContent = `${response.model}：图片 ${response.vision ? '支持' : '不支持'} / 文档 ${docLabel}`;
+      extractResultEl.title = [
+        response.visionDetail ? `图片检测：${response.visionDetail}` : '',
+        response.documentDetail ? `文档检测：${response.documentDetail}` : '',
+      ].filter(Boolean).join('\n');
     });
   });
 });

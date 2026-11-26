@@ -56,26 +56,21 @@
         </label>
       </div>
       <p class="hint" id="capabilityHint">预设模型的多模态能力与上下文长度来自内置 API 配置，无需手动填写；选择“自定义模型”时才可修改。</p>
+      <label class="field span-2">
+        <span>文件识别模型（可选）</span>
+        <input id="extractModel" type="text" placeholder="例如 deepseek-flash / qwen-vl-max" autocomplete="off">
+      </label>
+      <div class="extract-row span-2">
+        <button type="button" class="btn small" id="testExtract">检测图片/文档能力</button>
+        <span class="hint" id="extractResult"></span>
+      </div>
+      <p class="hint">文件识别模型不参与对话，只用于提取上传文件/题目图片内容。填写后，上传的图片/文档会优先调用该模型；留空时图片使用主模型（若支持多模态），文档使用 DeepSeek OCR。检测和调用使用当前 Endpoint 与 API Key；PDF/Word 文档解析目前要求 DeepSeek Endpoint（如 deepseek-flash）。</p>
       <div class="actions">
         <button type="button" class="btn" id="test">测试连接</button>
         <button type="button" class="btn primary" id="save">保存设置</button>
         <span class="status" id="status"></span>
       </div>
       <p class="hint">自定义 Endpoint 首次保存或测试时，浏览器会请求该域名的访问权限。API Key 仅保存在本机扩展存储中，不加密，也不会发送给网页。</p>
-    </section>
-
-    <section class="card">
-      <div class="card-head">
-        <h2>题目提取</h2>
-      </div>
-      <label class="switch-row">
-        <div>
-          <strong>自动识别题目中的图片（阶段 2 接入）</strong>
-          <p>默认开启。阶段 2 会安装本地 OCR 引擎；当前版本先保存该偏好，不会自动识别图片。</p>
-        </div>
-        <input type="checkbox" id="ocrImages">
-      </label>
-      <p class="hint">如果当前模型支持多模态，可以在 AI 对话输入框或题目提取窗口临时切换为模型识别。</p>
     </section>
 
     <section class="card">
