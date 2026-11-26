@@ -129,6 +129,12 @@
 - “更新内容”只提取 `## 更新内容` 到下一个 `##` 之间的文字；“下载”栏目中的链接和“密码：”后的值会用于第二个下载源。
 - 如果 Release 没有“更新内容”，提醒中只显示版本信息；如果其他下载源提取失败，则只提供 GitHub 源。
 
+## 版本号
+
+- 采用 `MAJOR.MINOR.PATCH`：新增功能升 MINOR，修复升 PATCH，不兼容变更升 MAJOR。
+- `manifest.version` 使用纯数字版本（如 `1.4.0`），Release tag 与之对应（如 `v1.4.0`）；更新检查会自动忽略前导 `v`。
+- Chrome / Edge 的 `manifest.version` 只接受 1～4 段数字，不能包含 `-beta` 等后缀；预发布可把 Release 标记为 prerelease，latest 接口会忽略它。
+
 ## 已知限制
 
 - 题目提取只支持 `.questionLi` / `.TiMu` 结构及同源 iframe；跨域 iframe、PDF/PPT/图片课件无法纯 DOM 提取。

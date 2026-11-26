@@ -533,8 +533,9 @@ function showUpdateModal(kind, data) {
     const sourceList = document.createElement('div');
     sourceList.className = 'update-source-list';
     const showSources = () => {
-      actions.remove();
       if (sourceList.childElementCount) return;
+      go.disabled = true;
+      go.textContent = '选择下载源';
       sourceList.appendChild(makeSourceButton(
         '从 GitHub 下载',
         state.githubName || state.releaseUrl || repoUrl,
@@ -554,7 +555,7 @@ function showUpdateModal(kind, data) {
         hint.textContent = 'Release 未提供其他下载源。';
         sourceList.appendChild(hint);
       }
-      card.appendChild(sourceList);
+      card.insertBefore(sourceList, actions);
     };
     go.addEventListener('click', showSources);
     actions.append(go, close);
